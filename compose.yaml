@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend_flask
+    ports:
+      - 5000:5000
+    volumes:
+      - ./backend:/app
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend_vite
+    environment:
+      - ROLLUP_SKIP_NATIVE="true"
+    ports:
+      - 5001:5001
+    volumes:
+        - ./frontend:/app
+        - /app/node_modules
