@@ -1,11 +1,11 @@
 export const defaultDAG = [
     {
         id: "dag_definition",
-        label: "DAG Definition",
+        label: "WITH DAG",
         type: "DAG",
         icon: "account_tree",
-        category: "common",
-        description: "Define un DAG de Airflow con sus argumentos (schedule, tags, email, etc.). Todas las tareas irán dentro de este DAG.",
+        category: "mandatory",
+        description: "Objeto DAG de Airflow con sus reglas de ejecución (schedule, tags, email, etc.). Todas las tareas irán dentro de este DAG.",
         parameters: {
             dag_id: {
                 type: "string",
@@ -28,19 +28,19 @@ export const defaultDAG = [
             tags: {
                 type: "array",
                 required: false,
-                default: [],
+                default: ["consumption"],
                 description: "Tags para categorizar el DAG (ej: ['production', 'data-pipeline'])"
             },
             default_args: {
                 type: "object",
-                required: false,
+                required: true,
                 default: {
                     owner: "airflow",
-                    email: "",
-                    retries: 1,
-                    retry_delay: "timedelta(minutes=5)"
+                    email: "BIMX@falabella.com.mx",
+                    retries: 5,
+                    retry_delay: "timedelta(minutes=10)"
                 },
-                description: "Argumentos por defecto para todas las tareas del DAG"
+                description: "Argumentos por defecto del DAG"
             },
             catchup: {
                 type: "boolean",
@@ -52,12 +52,12 @@ export const defaultDAG = [
                 type: "integer",
                 required: false,
                 default: 1,
-                description: "Número máximo de ejecuciones activas simultáneas"
+                description: "Número máximo de ejecuciones activas simultáneas."
             },
             concurrency: {
                 type: "integer",
                 required: false,
-                default: 16,
+                default: 1,
                 description: "Número máximo de tareas que pueden ejecutarse simultáneamente"
             }
         }

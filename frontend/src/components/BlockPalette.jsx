@@ -4,11 +4,14 @@ import { taskBlocksByCategory } from "../data/tasks";
 import { saveUserPreferences, loadUserPreferences } from "../utils/storage";
 
 const categoryLabels = {
-  common: "Comunes",
+  common: "Favoritos",
   airflow: "Airflow",
   google_cloud: "Google Cloud",
   database: "Databases",
-  transfer: "Transferencia"
+  transfer: "Operadores SFTP",
+  python: "Operador Python",
+  sql: "Otros SQL",
+  others: "Utilidades"
 };
 
 const categoryIcons = {
@@ -16,7 +19,10 @@ const categoryIcons = {
   airflow: "account_tree",
   google_cloud: "cloud",
   database: "storage",
-  transfer: "swap_horiz"
+  transfer: "swap_horiz",
+  python: "code",
+  sql: "table_rows",
+  others: "extension",
 };
 
 // Orden de categorías según la jerarquía definida
@@ -94,7 +100,9 @@ const defaultExpandedCategories = {
   airflow: false,
   google_cloud: false,
   database: false,
-  transfer: false
+  transfer: false,
+  python: false,
+  sql: false,
 };
 
 export default function BlockPalette() {

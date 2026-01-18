@@ -3,77 +3,90 @@
  */
 export const pythonOperators = [
   {
-    id: "python_callable",
-    label: "Python Function",
-    type: "PythonOperator",
-    icon: "functions",
-    category: "python",
-    description: "Ejecuta una función Python",
+    id: "branch_operator",
+    label: "Branch",
+    type: "BranchPythonOperator",
+    icon: "call_split",
+    category: "common",
+    description: "Ejecuta diferentes tareas basado en una condición Python",
     parameters: {
       task_id: {
         type: "string",
         required: true,
-        default: "Python Function",
-        description: "ID único de la tarea (task_id)"
+        default: "python_branch_task",
+        description: "ID único de la tarea (task_id)",
       },
       python_callable: {
         type: "string",
         required: true,
-        default: "def my_function(**context):\n    print('Hello from Airflow')\n    return 'success'",
-        description: "Código de la función Python a ejecutar"
+        default:
+          "def branch_func(**context):\n    return 'task_a'  # o 'task_b'",
+        description: "Función Python que retorna el task_id a ejecutar",
+      },
+      follow_task_ids_if_true: {
+        type: "array",
+        required: false,
+        default: [],
+        description: "Task IDs a ejecutar si la condición es True",
+      },
+      follow_task_ids_if_false: {
+        type: "array",
+        required: false,
+        default: [],
+        description: "Task IDs a ejecutar si la condición es False",
+      },
+    },
+  },
+  {
+    id: "python_operator",
+    label: "Python Function",
+    favoritos: false,
+    type: "PythonOperator",
+    icon: "functions",
+    category: "util",
+    description:
+      "Ejecuta una función Python con soporte completo de parámetros.",
+    parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "python_task",
+        description: "ID único de la tarea (task_id)",
+      },
+      python_callable: {
+        type: "function",
+        required: true,
+        description: "Función Python a ejecutar",
       },
       op_kwargs: {
         type: "object",
         required: false,
-        default: {},
-        description: "Argumentos pasados a la función callable"
+        description: "Diccionario de argumentos para pasar a la función",
       },
-      op_args: {
-        type: "array",
-        required: false,
-        default: [],
-        description: "Lista de argumentos posicionales"
-      },
-      templates_dict: {
-        type: "object",
-        required: false,
-        default: {},
-        description: "Diccionario de templates"
-      }
-    }
+    },
   },
   {
-    id: "python_virtualenv",
-    label: "Python VirtualEnv",
-    type: "PythonVirtualenvOperator",
-    icon: "workspace",
-    category: "python",
-    description: "Ejecuta Python en un entorno virtual",
+    id: "shortcircuit_operator",
+    label: "Short Circuit",
+    favoritos: false,
+    type: "ShortCircuitOperator",
+    icon: "⏸",
+    category: "util",
+    description:
+      "Evalúa una condición y detiene downstream tasks si la condición es falsa.",
     parameters: {
       task_id: {
         type: "string",
         required: true,
-        default: "Python VirtualEnv",
-        description: "ID único de la tarea (task_id)"
+        default: "shortcircuit_task",
+        description: "ID único de la tarea (task_id)",
       },
       python_callable: {
-        type: "string",
+        type: "function",
         required: true,
-        default: "",
-        description: "Función Python a ejecutar"
+        description:
+          "Función que retorna True o False para continuar la ejecución",
       },
-      requirements: {
-        type: "array",
-        required: false,
-        default: [],
-        description: "Lista de paquetes a instalar en el venv"
-      },
-      python_version: {
-        type: "string",
-        required: false,
-        default: "3",
-        description: "Versión de Python (3, 3.7, 3.8, etc.)"
-      }
-    }
-  }
+    },
+  },
 ];

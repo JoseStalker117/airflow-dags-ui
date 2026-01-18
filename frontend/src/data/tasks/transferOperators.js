@@ -7,89 +7,93 @@ export const transferOperators = [
   {
     id: "sftp_transfer",
     label: "SFTP Transfer",
+    favoritos: false,
     type: "SFTPOperator",
-    icon: "cloud_sync",
-    category: "transfer",
-    description: "Transfiere archivos vía SFTP (Secure File Transfer Protocol)",
+    icon: "📁",
+    category: "sftp",
+    description:
+      "Transfiere archivos hacia/desde el servidor SFTP (PUT, GET o DELETE).",
     parameters: {
       task_id: {
         type: "string",
         required: true,
-        default: "SFTP Transfer",
-        description: "ID único de la tarea (task_id)"
+        default: "sftp_transfer",
+        description: "ID único de la tarea",
+      },
+      ssh_conn_id: {
+        type: "string",
+        required: false,
+        description: "ID de conexión SSH/SFTP",
+      },
+      remote_host: {
+        type: "string",
+        required: false,
+        description: "Host remoto (si no se define en la conexión)",
       },
       local_filepath: {
         type: "string",
         required: false,
-        default: "",
-        description: "Ruta del archivo local (para operación 'get')"
+        description: "Ruta local de archivo(s) a transferir",
       },
       remote_filepath: {
         type: "string",
-        required: false,
-        default: "",
-        description: "Ruta del archivo remoto"
+        required: true,
+        description: "Ruta remota de archivo(s) a transferir",
       },
       operation: {
         type: "string",
-        required: true,
+        required: false,
         default: "put",
-        enum: ["put", "get"],
-        description: "Operación: 'put' (subir local->remoto) o 'get' (bajar remoto->local)"
+        description: "Tipo de operación: 'put', 'get' o 'delete'",
       },
-      sftp_conn_id: {
-        type: "string",
-        required: true,
-        default: "sftp_default",
-        description: "ID de conexión SFTP"
+      create_intermediate_dirs: {
+        type: "boolean",
+        required: false,
+        description: "Crear carpetas remotas si no existen",
       },
       confirm: {
         type: "boolean",
         required: false,
-        default: true,
-        description: "Confirmar antes de sobrescribir archivos existentes"
-      }
-    }
+        description: "Confirmar cada archivo transferido",
+      },
+    },
   },
   {
-    id: "ftp_transfer",
-    label: "FTP Transfer",
-    type: "FTPOperation",
-    icon: "swap_horiz",
-    category: "transfer",
-    description: "Transfiere archivos vía FTP (File Transfer Protocol)",
+    id: "sftp_sensor",
+    label: "SFTP Sensor",
+    favoritos: false,
+    type: "SFTPSensor",
+    icon: "⏱",
+    category: "sftp",
+    description:
+      "Espera a que aparezca un archivo o directorio en el servidor SFTP.",
     parameters: {
       task_id: {
         type: "string",
         required: true,
-        default: "FTP Transfer",
-        description: "ID único de la tarea (task_id)"
+        default: "sftp_sensor",
+        description: "ID único de la tarea",
       },
-      ftp_conn_id: {
+      path: {
         type: "string",
         required: true,
-        default: "ftp_default",
-        description: "ID de conexión FTP"
+        description: "Ruta remota a monitorear",
       },
-      local_filepath: {
+      file_pattern: {
         type: "string",
         required: false,
-        default: "",
-        description: "Ruta del archivo local"
+        description: "Patrón de archivo a buscar (fnmatch)",
       },
-      remote_filepath: {
+      sftp_conn_id: {
         type: "string",
         required: false,
-        default: "",
-        description: "Ruta del archivo remoto"
+        description: "ID de conexión Airflow para SFTP",
       },
-      operation: {
+      newer_than: {
         type: "string",
-        required: true,
-        default: "put",
-        enum: ["put", "get", "delete", "list", "mkdir", "rmdir"],
-        description: "Operación FTP a realizar"
-      }
-    }
-  }
+        required: false,
+        description: "Fecha mínima para considerar archivo nuevo",
+      },
+    },
+  },
 ];
