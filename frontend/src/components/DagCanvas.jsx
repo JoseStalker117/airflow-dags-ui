@@ -298,12 +298,13 @@ export default function DagCanvas() {
   }, [initialEdges]);
 
   // Función para encontrar el nodo más cercano y determinar la zona de drop
+  // Zonas posibles: 'above', 'below', 'branch-true', 'branch-false'
   const findDropZone = useCallback((dropY, dropX, excludeNodeId = null) => {
     if (nodes.length === 0) return null;
 
     let closestNode = null;
     let minDistance = Infinity;
-    let dropZone = 'below'; // 'above', 'below'
+    let dropZone = 'below'; // 'above', 'below', 'branch-true', 'branch-false'
 
     nodes.forEach(node => {
       if (node.data?.type === "DAG") return; // Ignorar DAG
@@ -315,6 +316,7 @@ export default function DagCanvas() {
       const nodeWidth = 280;
       const nodeCenterX = nodeX + nodeWidth / 2;
       const nodeCenterY = nodeY + nodeHeight / 2;
+      const isBranch = node.data?.type === "BranchPythonOperator";
 
       // Calcular distancia euclidiana al centro del nodo
       const distanceX = Math.abs(dropX - nodeCenterX);
@@ -326,9 +328,21 @@ export default function DagCanvas() {
         minDistance = distance;
         closestNode = node;
 
-        // Determinar zona basada en posición Y relativa al centro del nodo
+        // Determinar zona basada en posición relativa
         if (dropY < nodeCenterY) {
           dropZone = 'above';
+        } else if (isBranch) {
+          // Para BranchPythonOperator, determinar si es rama true (izquierda) o false (derecha)
+          // Los handles están en 40% (true) y 60% (false) del ancho
+          const trueHandleX = nodeX + nodeWidth * 0.4;
+          const falseHandleX = nodeX + nodeWidth * 0.6;
+          
+          // Si está debajo del nodo, determinar qué rama
+          if (dropX < nodeCenterX) {
+            dropZone = 'branch-true'; // Lado izquierdo = true (verde)
+          } else {
+            dropZone = 'branch-false'; // Lado derecho = false (rojo)
+          }
         } else {
           dropZone = 'below';
         }
@@ -392,18 +406,84 @@ export default function DagCanvas() {
     const isBranchOperator = data.type === "BranchPythonOperator";
     const isDAG = data.type === "DAG";
     
-    if (dropZoneInfo && !isBranchOperator && !isDAG) {
+    if (dropZoneInfo && !isDAG) {
       const { node: targetNode, zone } = dropZoneInfo;
+      const isTargetBranch = targetNode.data?.type === "BranchPythonOperator";
       
-      if (zone === 'below') {
-        // Insertar después del nodo objetivo
-        // Conectar desde targetNode al nuevo nodo
-        const outgoingEdge = initialEdges.find(e => e.source === targetNode.id);
-        if (outgoingEdge) {
-          // Si targetNode tiene una conexión saliente, insertar el nuevo nodo en medio
+      // Manejar inserción en ramas de BranchPythonOperator
+      if (zone === 'branch-true' || zone === 'branch-false') {
+        const handleId = zone === 'branch-true' ? 'true' : 'false';
+        const strokeColor = zone === 'branch-true' ? '#22c55e' : '#ef4444'; // Verde o Rojo
+        
+        // Buscar si ya hay una conexión desde este handle
+        const existingBranchEdge = initialEdges.find(
+          e => e.source === targetNode.id && e.sourceHandle === handleId
+        );
+        
+        if (existingBranchEdge) {
+          // Insertar en medio de la rama existente
           newEdges = initialEdges
-            .filter(e => e.id !== outgoingEdge.id) // Remover conexión antigua
+            .filter(e => e.id !== existingBranchEdge.id)
             .concat([{
+              id: `e${targetNode.id}-${handleId}-${newNodeId}`,
+              source: targetNode.id,
+              sourceHandle: handleId,
+              target: newNodeId,
+              type: "smoothstep",
+              animated: true,
+              style: { stroke: strokeColor, strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor }
+            }, {
+              id: `e${newNodeId}-${existingBranchEdge.target}`,
+              source: newNodeId,
+              target: existingBranchEdge.target,
+              type: "smoothstep",
+              animated: true,
+              style: { stroke: "#64748b", strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
+            }]);
+        } else {
+          // Crear nueva conexión desde la rama
+          newEdges = [...initialEdges, {
+            id: `e${targetNode.id}-${handleId}-${newNodeId}`,
+            source: targetNode.id,
+            sourceHandle: handleId,
+            target: newNodeId,
+            type: "smoothstep",
+            animated: true,
+            style: { stroke: strokeColor, strokeWidth: 2 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor }
+          }];
+        }
+      } else if (zone === 'below') {
+        // Insertar después del nodo objetivo
+        // Para nodos normales (no BranchPythonOperator como target)
+        if (!isTargetBranch) {
+          const outgoingEdge = initialEdges.find(e => e.source === targetNode.id);
+          if (outgoingEdge) {
+            // Si targetNode tiene una conexión saliente, insertar el nuevo nodo en medio
+            newEdges = initialEdges
+              .filter(e => e.id !== outgoingEdge.id)
+              .concat([{
+                id: `e${targetNode.id}-${newNodeId}`,
+                source: targetNode.id,
+                target: newNodeId,
+                type: "smoothstep",
+                animated: true,
+                style: { stroke: "#64748b", strokeWidth: 2 },
+                markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
+              }, {
+                id: `e${newNodeId}-${outgoingEdge.target}`,
+                source: newNodeId,
+                target: outgoingEdge.target,
+                type: "smoothstep",
+                animated: true,
+                style: { stroke: "#64748b", strokeWidth: 2 },
+                markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
+              }]);
+          } else {
+            // Si no tiene conexión saliente, conectar directamente desde targetNode
+            newEdges = [...initialEdges, {
               id: `e${targetNode.id}-${newNodeId}`,
               source: targetNode.id,
               target: newNodeId,
@@ -411,42 +491,34 @@ export default function DagCanvas() {
               animated: true,
               style: { stroke: "#64748b", strokeWidth: 2 },
               markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
-            }, {
-              id: `e${newNodeId}-${outgoingEdge.target}`,
-              source: newNodeId,
-              target: outgoingEdge.target,
-              type: "smoothstep",
-              animated: true,
-              style: { stroke: "#64748b", strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
-            }]);
-        } else {
-          // Si no tiene conexión saliente, conectar directamente desde targetNode
-          newEdges = [...initialEdges, {
-            id: `e${targetNode.id}-${newNodeId}`,
-            source: targetNode.id,
-            target: newNodeId,
-            type: "smoothstep",
-            animated: true,
-            style: { stroke: "#64748b", strokeWidth: 2 },
-            markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
-          }];
+            }];
+          }
         }
+        // Si es un BranchPythonOperator target con zone='below', no hacer nada aquí
+        // porque debería usar branch-true o branch-false
       } else if (zone === 'above') {
         // Insertar antes del nodo objetivo
         const targetEdge = initialEdges.find(e => e.target === targetNode.id);
         if (targetEdge) {
+          // Determinar el color basado en si viene de un branch
+          const sourceNode = initialNodes.find(n => n.id === targetEdge.source);
+          const isFromBranch = sourceNode?.data?.type === "BranchPythonOperator";
+          const strokeColor = isFromBranch 
+            ? (targetEdge.sourceHandle === 'true' ? '#22c55e' : (targetEdge.sourceHandle === 'false' ? '#ef4444' : '#64748b'))
+            : '#64748b';
+          
           // Redirigir conexión: source -> newNode -> targetNode
           newEdges = initialEdges
             .filter(e => e.id !== targetEdge.id)
             .concat([{
-              id: `e${targetEdge.source}-${newNodeId}`,
+              id: `e${targetEdge.source}-${targetEdge.sourceHandle || ''}-${newNodeId}`,
               source: targetEdge.source,
+              sourceHandle: targetEdge.sourceHandle,
               target: newNodeId,
               type: "smoothstep",
               animated: true,
-              style: { stroke: "#64748b", strokeWidth: 2 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
+              style: { stroke: strokeColor, strokeWidth: 2 },
+              markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor }
             }, {
               id: `e${newNodeId}-${targetNode.id}`,
               source: newNodeId,
@@ -480,9 +552,8 @@ export default function DagCanvas() {
           }
         }
       }
-      // 'middle' se trata como 'below'
-    } else if (initialNodes.length > 0 && !isBranchOperator && !isDAG) {
-      // Fallback a conexión automática estándar
+    } else if (initialNodes.length > 0 && !isDAG) {
+      // Fallback a conexión automática estándar (también aplica para BranchPythonOperator)
       const dagNode = initialNodes.find((node) => node.data?.type === "DAG");
       
       if (dagNode) {
@@ -704,20 +775,30 @@ export default function DagCanvas() {
             // El nodo movido estaba en medio de una cadena, reconectar la cadena
             const sourceOfMoved = incomingToMovedNode.source;
             const targetOfMoved = outgoingFromMovedNode.target;
+            const sourceHandle = incomingToMovedNode.sourceHandle;
             
             // Verificar que no estemos creando un ciclo o conexión redundante
             if (sourceOfMoved !== targetOfMoved) {
               // Verificar si ya existe esta conexión
-              const connectionExists = newEdges.some(e => e.source === sourceOfMoved && e.target === targetOfMoved);
+              const connectionExists = newEdges.some(e => 
+                e.source === sourceOfMoved && e.target === targetOfMoved && e.sourceHandle === sourceHandle
+              );
               if (!connectionExists) {
-                // Determinar el color basado en si el source es DAG
+                // Determinar el color basado en si el source es DAG o Branch
                 const sourceNodeData = nodes.find(n => n.id === sourceOfMoved);
                 const isFromDAG = sourceNodeData?.data?.type === "DAG";
-                const strokeColor = isFromDAG ? "#6366f1" : "#64748b";
+                const isFromBranch = sourceNodeData?.data?.type === "BranchPythonOperator";
+                let strokeColor = "#64748b";
+                if (isFromDAG) strokeColor = "#6366f1";
+                else if (isFromBranch) {
+                  strokeColor = sourceHandle === 'true' ? '#22c55e' : 
+                                sourceHandle === 'false' ? '#ef4444' : '#64748b';
+                }
                 
                 newEdges.push({
-                  id: `e${sourceOfMoved}-${targetOfMoved}`,
+                  id: `e${sourceOfMoved}-${sourceHandle || ''}-${targetOfMoved}`,
                   source: sourceOfMoved,
+                  sourceHandle: sourceHandle,
                   target: targetOfMoved,
                   type: "smoothstep",
                   animated: true,
@@ -738,15 +819,22 @@ export default function DagCanvas() {
               // Remover la conexión entrante al target (si no fue ya removida)
               newEdges = newEdges.filter(e => e.id !== incomingToTarget.id);
               
-              // Determinar color basado en si viene de DAG
+              // Determinar color basado en si viene de DAG o Branch
               const sourceNodeData = nodes.find(n => n.id === incomingToTarget.source);
               const isFromDAG = sourceNodeData?.data?.type === "DAG";
-              const strokeColor = isFromDAG ? "#6366f1" : "#64748b";
+              const isFromBranch = sourceNodeData?.data?.type === "BranchPythonOperator";
+              let strokeColor = "#64748b";
+              if (isFromDAG) strokeColor = "#6366f1";
+              else if (isFromBranch) {
+                strokeColor = incomingToTarget.sourceHandle === 'true' ? '#22c55e' : 
+                              incomingToTarget.sourceHandle === 'false' ? '#ef4444' : '#64748b';
+              }
               
               // Conectar source original -> nodo movido
               newEdges.push({
-                id: `e${incomingToTarget.source}-${node.id}`,
+                id: `e${incomingToTarget.source}-${incomingToTarget.sourceHandle || ''}-${node.id}`,
                 source: incomingToTarget.source,
+                sourceHandle: incomingToTarget.sourceHandle,
                 target: node.id,
                 type: "smoothstep",
                 animated: true,
@@ -765,20 +853,25 @@ export default function DagCanvas() {
               style: { stroke: "#64748b", strokeWidth: 2 },
               markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
             });
-          } else {
-            // Insertar después del nodo objetivo
-            const outgoingFromTarget = eds.find(e => e.source === targetNode.id);
+          } else if (dropZonePreview.zone === 'branch-true' || dropZonePreview.zone === 'branch-false') {
+            // Insertar en una rama de BranchPythonOperator
+            const handleId = dropZonePreview.zone === 'branch-true' ? 'true' : 'false';
+            const strokeColor = dropZonePreview.zone === 'branch-true' ? '#22c55e' : '#ef4444';
             
-            if (outgoingFromTarget) {
-              // Hay una conexión saliente del target, insertar en medio
-              // Remover la conexión saliente del target (si no fue ya removida)
-              newEdges = newEdges.filter(e => e.id !== outgoingFromTarget.id);
+            // Buscar si ya hay una conexión desde este handle
+            const existingBranchEdge = eds.find(
+              e => e.source === targetNode.id && e.sourceHandle === handleId
+            );
+            
+            if (existingBranchEdge) {
+              // Insertar en medio de la rama existente
+              newEdges = newEdges.filter(e => e.id !== existingBranchEdge.id);
               
-              // Conectar nodo movido -> target original
+              // Conectar nodo movido al destino original
               newEdges.push({
-                id: `e${node.id}-${outgoingFromTarget.target}`,
+                id: `e${node.id}-${existingBranchEdge.target}`,
                 source: node.id,
-                target: outgoingFromTarget.target,
+                target: existingBranchEdge.target,
                 type: "smoothstep",
                 animated: true,
                 style: { stroke: "#64748b", strokeWidth: 2 },
@@ -786,20 +879,56 @@ export default function DagCanvas() {
               });
             }
             
-            // Determinar color basado en si el target es DAG
-            const isTargetDAG = targetNode.data?.type === "DAG";
-            const strokeColor = isTargetDAG ? "#6366f1" : "#64748b";
-            
-            // Conectar target -> nodo movido
+            // Conectar branch -> nodo movido
             newEdges.push({
-              id: `e${targetNode.id}-${node.id}`,
+              id: `e${targetNode.id}-${handleId}-${node.id}`,
               source: targetNode.id,
+              sourceHandle: handleId,
               target: node.id,
               type: "smoothstep",
               animated: true,
               style: { stroke: strokeColor, strokeWidth: 2 },
               markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor }
             });
+          } else if (dropZonePreview.zone === 'below') {
+            // Insertar después del nodo objetivo (solo para nodos normales)
+            const isTargetBranch = targetNode.data?.type === "BranchPythonOperator";
+            
+            if (!isTargetBranch) {
+              const outgoingFromTarget = eds.find(e => e.source === targetNode.id);
+              
+              if (outgoingFromTarget) {
+                // Hay una conexión saliente del target, insertar en medio
+                // Remover la conexión saliente del target (si no fue ya removida)
+                newEdges = newEdges.filter(e => e.id !== outgoingFromTarget.id);
+                
+                // Conectar nodo movido -> target original
+                newEdges.push({
+                  id: `e${node.id}-${outgoingFromTarget.target}`,
+                  source: node.id,
+                  target: outgoingFromTarget.target,
+                  type: "smoothstep",
+                  animated: true,
+                  style: { stroke: "#64748b", strokeWidth: 2 },
+                  markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" }
+                });
+              }
+              
+              // Determinar color basado en si el target es DAG
+              const isTargetDAG = targetNode.data?.type === "DAG";
+              const strokeColor = isTargetDAG ? "#6366f1" : "#64748b";
+              
+              // Conectar target -> nodo movido
+              newEdges.push({
+                id: `e${targetNode.id}-${node.id}`,
+                source: targetNode.id,
+                target: node.id,
+                type: "smoothstep",
+                animated: true,
+                style: { stroke: strokeColor, strokeWidth: 2 },
+                markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor }
+              });
+            }
           }
           
           return newEdges;
@@ -947,7 +1076,7 @@ export default function DagCanvas() {
               zoomable
             />
             
-            {/* Indicadores visuales de zonas de drop - solo para el nodo más cercano */}
+            {/* Indicador visual del nodo objetivo - solo el highlight */}
             {(isDragging || isNodeDragging) && dropZonePreview && (() => {
               const node = nodes.find(n => n.id === dropZonePreview.nodeId);
               if (!node || node.data?.type === "DAG" || node.id === draggingNodeId) return null;
@@ -956,110 +1085,20 @@ export default function DagCanvas() {
               const nodeWidth = 280;
               const isActiveAbove = dropZonePreview.zone === 'above';
               const isActiveBelow = dropZonePreview.zone === 'below';
-              const indicatorHeight = 28;
+              const isActiveBranchTrue = dropZonePreview.zone === 'branch-true';
+              const isActiveBranchFalse = dropZonePreview.zone === 'branch-false';
+              
+              // Determinar color del borde basado en la zona activa
+              const getBorderColor = () => {
+                if (isActiveAbove) return '#6366f1';
+                if (isActiveBelow) return '#22c55e';
+                if (isActiveBranchTrue) return '#22c55e';
+                if (isActiveBranchFalse) return '#ef4444';
+                return '#64748b';
+              };
               
               return (
                 <div key={`dropzone-${node.id}`} style={{ pointerEvents: 'none' }}>
-                  {/* Zona superior - Insertar ANTES - pegada al borde TOP del nodo */}
-                  {isActiveAbove && (
-                    <>
-                      {/* Barra indicadora en el borde superior */}
-                      <div
-                        style={{
-                          position: 'absolute',
-                          left: node.position.x - 15,
-                          top: node.position.y - indicatorHeight - 4,
-                          width: nodeWidth + 30,
-                          height: indicatorHeight,
-                          background: 'linear-gradient(180deg, #6366f1 0%, #818cf8 100%)',
-                          borderRadius: '8px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          zIndex: 1001,
-                          boxShadow: '0 2px 10px rgba(99, 102, 241, 0.5)',
-                        }}
-                      >
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          color: '#ffffff',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.5px',
-                        }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_upward</span>
-                          Insertar antes
-                        </div>
-                      </div>
-                      {/* Línea conectora */}
-                      <div
-                        style={{
-                          position: 'absolute',
-                          left: node.position.x + nodeWidth / 2 - 2,
-                          top: node.position.y - 4,
-                          width: 4,
-                          height: 4,
-                          background: '#6366f1',
-                          borderRadius: '50%',
-                          zIndex: 1001,
-                        }}
-                      />
-                    </>
-                  )}
-                  
-                  {/* Zona inferior - Insertar DESPUÉS - pegada al borde BOTTOM del nodo */}
-                  {isActiveBelow && (
-                    <>
-                      {/* Barra indicadora en el borde inferior */}
-                      <div
-                        style={{
-                          position: 'absolute',
-                          left: node.position.x - 15,
-                          top: node.position.y + nodeHeight + 4,
-                          width: nodeWidth + 30,
-                          height: indicatorHeight,
-                          background: 'linear-gradient(180deg, #22c55e 0%, #4ade80 100%)',
-                          borderRadius: '8px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          zIndex: 1001,
-                          boxShadow: '0 2px 10px rgba(34, 197, 94, 0.5)',
-                        }}
-                      >
-                        <div style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          color: '#ffffff',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.5px',
-                        }}>
-                          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_downward</span>
-                          Insertar después
-                        </div>
-                      </div>
-                      {/* Línea conectora */}
-                      <div
-                        style={{
-                          position: 'absolute',
-                          left: node.position.x + nodeWidth / 2 - 2,
-                          top: node.position.y + nodeHeight,
-                          width: 4,
-                          height: 4,
-                          background: '#22c55e',
-                          borderRadius: '50%',
-                          zIndex: 1001,
-                        }}
-                      />
-                    </>
-                  )}
-                  
                   {/* Highlight del nodo objetivo - borde coloreado */}
                   <div
                     style={{
@@ -1068,12 +1107,12 @@ export default function DagCanvas() {
                       top: node.position.y - 4,
                       width: nodeWidth + 8,
                       height: nodeHeight + 8,
-                      borderTop: `3px solid ${isActiveAbove ? '#6366f1' : '#22c55e'}`,
-                      borderRight: `3px solid ${isActiveAbove ? '#6366f1' : '#22c55e'}`,
-                      borderBottom: `3px solid ${isActiveAbove ? '#6366f1' : '#22c55e'}`,
-                      borderLeft: `3px solid ${isActiveAbove ? '#6366f1' : '#22c55e'}`,
+                      borderTop: `3px solid ${getBorderColor()}`,
+                      borderRight: `3px solid ${getBorderColor()}`,
+                      borderBottom: `3px solid ${getBorderColor()}`,
+                      borderLeft: `3px solid ${getBorderColor()}`,
                       borderRadius: '12px',
-                      boxShadow: `0 0 20px ${isActiveAbove ? 'rgba(99, 102, 241, 0.4)' : 'rgba(34, 197, 94, 0.4)'}`,
+                      boxShadow: `0 0 20px ${getBorderColor()}66`,
                       zIndex: 999,
                       animation: 'pulse 1.5s ease-in-out infinite',
                     }}
@@ -1083,6 +1122,213 @@ export default function DagCanvas() {
             })()}
           </ReactFlow>
         )}
+        
+        {/* Overlay de notificación superior - Indicador de zona de drop */}
+        {(isDragging || isNodeDragging) && dropZonePreview && (() => {
+          const node = nodes.find(n => n.id === dropZonePreview.nodeId);
+          if (!node || node.data?.type === "DAG" || node.id === draggingNodeId) return null;
+          
+          const isActiveAbove = dropZonePreview.zone === 'above';
+          const isActiveBelow = dropZonePreview.zone === 'below';
+          const isActiveBranchTrue = dropZonePreview.zone === 'branch-true';
+          const isActiveBranchFalse = dropZonePreview.zone === 'branch-false';
+          
+          // Obtener el nombre del nodo objetivo
+          const targetTaskId = node.data?.task_id || node.data?.label || 'task';
+          
+          // Generar el texto del comando según la zona
+          const getCommandText = () => {
+            if (isActiveAbove) return `new_task >> ${targetTaskId}`;
+            if (isActiveBelow) return `${targetTaskId} >> new_task`;
+            if (isActiveBranchTrue) return `${targetTaskId}.set_downstream(new_task, branch='true')`;
+            if (isActiveBranchFalse) return `${targetTaskId}.set_downstream(new_task, branch='false')`;
+            return '';
+          };
+          
+          // Determinar color principal
+          const getColor = () => {
+            if (isActiveAbove) return { bg: '#6366f1', light: '#818cf8' };
+            if (isActiveBelow) return { bg: '#22c55e', light: '#4ade80' };
+            if (isActiveBranchTrue) return { bg: '#22c55e', light: '#4ade80' };
+            if (isActiveBranchFalse) return { bg: '#ef4444', light: '#f87171' };
+            return { bg: '#64748b', light: '#94a3b8' };
+          };
+          
+          // Determinar etiqueta y descripción
+          const getInfo = () => {
+            if (isActiveAbove) return { 
+              label: 'INSERTAR ANTES', 
+              desc: 'El nuevo elemento se conectará ANTES de este nodo',
+              arrow: 'north' // Flecha apuntando hacia arriba
+            };
+            if (isActiveBelow) return { 
+              label: 'INSERTAR DESPUÉS', 
+              desc: 'El nuevo elemento se conectará DESPUÉS de este nodo',
+              arrow: 'south' // Flecha apuntando hacia abajo
+            };
+            if (isActiveBranchTrue) return { 
+              label: 'RAMA VERDADERA', 
+              desc: 'Conectar a la rama TRUE (condición verdadera)',
+              arrow: 'south_west' // Flecha hacia abajo-izquierda
+            };
+            if (isActiveBranchFalse) return { 
+              label: 'RAMA FALSA', 
+              desc: 'Conectar a la rama FALSE (condición falsa)',
+              arrow: 'south_east' // Flecha hacia abajo-derecha
+            };
+            return { label: '', desc: '', arrow: 'link' };
+          };
+          
+          const color = getColor();
+          const info = getInfo();
+          
+          return (
+            <div
+              style={{
+                position: 'absolute',
+                top: '10px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 2000,
+                pointerEvents: 'none',
+              }}
+            >
+              <div
+                style={{
+                  background: `linear-gradient(135deg, ${color.bg} 0%, ${color.light} 100%)`,
+                  borderRadius: '12px',
+                  padding: '12px 20px',
+                  boxShadow: `0 8px 32px ${color.bg}66, 0 4px 12px rgba(0,0,0,0.15)`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '16px',
+                  minWidth: '320px',
+                  maxWidth: '500px',
+                }}
+              >
+                {/* Icono de flecha direccional grande */}
+                <div
+                  style={{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '10px',
+                    background: 'rgba(255,255,255,0.2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ 
+                    fontSize: '28px', 
+                    color: '#ffffff',
+                  }}>
+                    {info.arrow}
+                  </span>
+                </div>
+                
+                {/* Contenido de texto */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* Etiqueta principal */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginBottom: '4px',
+                  }}>
+                    <span style={{
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      color: '#ffffff',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      {info.label}
+                    </span>
+                    {(isActiveBranchTrue || isActiveBranchFalse) && (
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        color: 'rgba(255,255,255,0.8)',
+                        background: 'rgba(255,255,255,0.2)',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                      }}>
+                        {isActiveBranchTrue ? 'TRUE' : 'FALSE'}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {/* Descripción */}
+                  <div style={{
+                    fontSize: '11px',
+                    color: 'rgba(255,255,255,0.85)',
+                    marginBottom: '6px',
+                  }}>
+                    {info.desc}
+                  </div>
+                  
+                  {/* Código del comando */}
+                  <div style={{
+                    background: 'rgba(0,0,0,0.25)',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+                    fontSize: '11px',
+                    color: '#ffffff',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}>
+                    <span className="material-symbols-outlined" style={{ 
+                      fontSize: '12px', 
+                      color: 'rgba(255,255,255,0.7)',
+                      flexShrink: 0,
+                    }}>
+                      code
+                    </span>
+                    {getCommandText()}
+                  </div>
+                </div>
+                
+                {/* Indicador del nodo objetivo */}
+                <div
+                  style={{
+                    background: 'rgba(255,255,255,0.15)',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    flexShrink: 0,
+                    textAlign: 'center',
+                  }}
+                >
+                  <div style={{
+                    fontSize: '9px',
+                    color: 'rgba(255,255,255,0.7)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    marginBottom: '2px',
+                  }}>
+                    Destino
+                  </div>
+                  <div style={{
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: '#ffffff',
+                    maxWidth: '100px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {targetTaskId}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         
         {/* Estilos para animación de pulse */}
         <style dangerouslySetInnerHTML={{ __html: `
