@@ -12,6 +12,12 @@ export const transferOperators = [
     category: "transfer",
     description: "Transfiere archivos vía SFTP (Secure File Transfer Protocol)",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "SFTP Transfer",
+        description: "ID único de la tarea (task_id)"
+      },
       local_filepath: {
         type: "string",
         required: false,
@@ -53,6 +59,12 @@ export const transferOperators = [
     category: "transfer",
     description: "Transfiere archivos vía FTP (File Transfer Protocol)",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "FTP Transfer",
+        description: "ID único de la tarea (task_id)"
+      },
       ftp_conn_id: {
         type: "string",
         required: true,

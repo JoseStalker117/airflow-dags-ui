@@ -17,6 +17,21 @@ export default function DagFlowNode({ data }) {
     }
   }, [data.showParameters]);
 
+  // Sincronizar localParameters cuando cambia data.parameters
+  useEffect(() => {
+    if (data.parameters) {
+      setLocalParameters(data.parameters);
+    }
+  }, [data.parameters]);
+
+  // Sincronizar taskName con task_id cuando cambia data.task_id o localParameters.task_id
+  useEffect(() => {
+    const currentTaskId = data.task_id || localParameters.task_id;
+    if (currentTaskId !== undefined && currentTaskId !== taskName) {
+      setTaskName(currentTaskId);
+    }
+  }, [data.task_id, localParameters.task_id]);
+
   // Obtener icono y color según el tipo de operador (igual que TaskNode)
   const getOperatorInfo = (type) => {
     const operatorStyles = {
@@ -103,13 +118,26 @@ export default function DagFlowNode({ data }) {
   // Obtener definiciones de parámetros desde data (si están disponibles)
   const parameterDefinitions =
     data.parameterDefinitions || data.parameters || {};
+  
+  // Contar parámetros definidos (no solo los que tienen valores)
+  const paramDefinitionsCount = parameterDefinitions 
+    ? Object.keys(parameterDefinitions).length 
+    : 0;
 
   // Función para actualizar un parámetro
   const updateParameter = (key, value) => {
     const updated = { ...localParameters, [key]: value };
     setLocalParameters(updated);
+    
+    // Si se actualiza task_id, actualizar también data.task_id
+    const updatedData = { ...data, parameters: updated };
+    if (key === "task_id") {
+      updatedData.task_id = value;
+      setTaskName(value); // Sincronizar el título inmediatamente
+    }
+    
     if (data.onUpdate) {
-      data.onUpdate({ ...data, parameters: updated });
+      data.onUpdate(updatedData);
     }
   };
 
@@ -255,8 +283,9 @@ export default function DagFlowNode({ data }) {
   return (
     <div
       className={`bg-white rounded-lg shadow-lg border-2 ${borderColorClasses[operatorInfo.color]} 
-                    hover:shadow-xl transition-all ${isDAG ? "min-w-[500px]" : "min-w-[280px]"}
-                    ${isDAG ? "bg-gradient-to-br from-indigo-50 to-purple-50" : ""}`}
+                    hover:shadow-xl transition-all ${isDAG ? "min-w-[280px] sm:min-w-[400px] md:min-w-[500px]" : "min-w-[280px]"}
+                    ${isDAG ? "bg-gradient-to-br from-indigo-50 to-purple-50" : ""}
+                    ${isDAG ? "w-full max-w-full" : ""}`}
     >
       {/* Handle superior (entrada) - NO se muestra para nodos DAG */}
       {!isDAG && (
@@ -274,45 +303,35 @@ export default function DagFlowNode({ data }) {
           /* Header especial para DAG */
           <>
             <div className="border-b-2 border-indigo-200 pb-3 mb-3">
-              <div className="flex items-start gap-2">
+              <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-3">
                 <div
-                  className={`${colorClasses[operatorInfo.color]} rounded-lg p-2 flex-shrink-0`}
+                  className={`${colorClasses[operatorInfo.color]} rounded-lg p-2 flex-shrink-0 self-start`}
                 >
-                  <span className="material-symbols-outlined text-white text-lg">
+                  <span className="material-symbols-outlined text-white text-base sm:text-lg">
                     {operatorInfo.icon}
                   </span>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <input
-                    type="text"
-                    value={taskName}
-                    onChange={(e) => {
-                      setTaskName(e.target.value);
-                      if (data.onUpdate) {
-                        data.onUpdate({ ...data, task_id: e.target.value });
-                      }
-                    }}
-                    className="font-bold text-lg text-indigo-900 bg-transparent border-none 
-                             focus:outline-none focus:ring-1 focus:ring-indigo-400 rounded px-1 w-full"
-                    placeholder={data.label}
-                  />
+                <div className="flex-1 min-w-0 w-full sm:w-auto">
+                  <div className="font-bold text-base sm:text-lg text-indigo-900 px-1 w-full">
+                    {localParameters.task_id || data.task_id || data.label}
+                  </div>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-xs text-indigo-600 font-mono truncate">
                       {data.type}
                     </span>
                   </div>
                 </div>
-                <div className="flex gap-1">
+                <div className="flex gap-1 sm:gap-1.5 self-start sm:self-auto mt-1 sm:mt-0">
                   <button
                     onClick={() => setShowParams(!showParams)}
-                    className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                    className={`px-2 py-1.5 sm:px-2.5 sm:py-1 text-xs font-medium rounded transition-colors flex-shrink-0 ${
                       showParams
                         ? "bg-indigo-100 text-indigo-700"
                         : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                     }`}
                     title="Ver/Editar parámetros"
                   >
-                    <span className="material-symbols-outlined text-sm align-middle">
+                    <span className="material-symbols-outlined text-xs sm:text-sm align-middle">
                       {showParams ? "expand_less" : "expand_more"}
                     </span>
                   </button>
@@ -384,7 +403,7 @@ export default function DagFlowNode({ data }) {
 
               {/* Botones */}
               <div className="flex gap-1">
-                {paramCount > 0 && (
+                {paramDefinitionsCount > 0 && (
                   <button
                     onClick={() => setShowParams(!showParams)}
                     className={`px-2 py-1 text-xs font-medium rounded transition-colors ${

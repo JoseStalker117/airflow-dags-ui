@@ -10,6 +10,12 @@ export const sqlOperators = [
     category: "sql",
     description: "Ejecuta una consulta SQL",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "SQL Execute",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,
@@ -72,6 +78,12 @@ export const sqlOperators = [
     category: "sql",
     description: "Ejecuta consultas en BigQuery",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "BigQuery",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,

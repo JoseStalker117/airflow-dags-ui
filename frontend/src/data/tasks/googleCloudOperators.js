@@ -11,6 +11,12 @@ export const googleCloudOperators = [
     category: "google_cloud",
     description: "Ejecuta consultas SQL en Google BigQuery",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "BigQuery",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,
@@ -52,6 +58,12 @@ export const googleCloudOperators = [
     category: "google_cloud",
     description: "Carga datos de Google Cloud Storage a BigQuery",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "GCS to BigQuery",
+        description: "ID único de la tarea (task_id)"
+      },
       bucket: {
         type: "string",
         required: true,
@@ -94,6 +106,12 @@ export const googleCloudOperators = [
     category: "google_cloud",
     description: "Exporta datos de BigQuery a Google Cloud Storage",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "BigQuery to GCS",
+        description: "ID único de la tarea (task_id)"
+      },
       source_project_dataset_table: {
         type: "string",
         required: true,
@@ -129,6 +147,12 @@ export const googleCloudOperators = [
     category: "google_cloud",
     description: "Copia objetos dentro de Google Cloud Storage",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "GCS Copy",
+        description: "ID único de la tarea (task_id)"
+      },
       source_bucket: {
         type: "string",
         required: true,

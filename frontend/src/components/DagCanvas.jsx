@@ -12,6 +12,7 @@ import "reactflow/dist/style.css";
 import dagre from "dagre";
 import DagFlowNode from "./DagFlowNode";
 import { saveCanvasState, loadCanvasState } from "../utils/storage";
+import { defaultDAG } from "../data/tasks/defaultDAG";
 
 // Configuración del layout de árbol
 const getLayoutedElements = (nodes, edges, direction = "TB") => {
@@ -40,10 +41,25 @@ const getLayoutedElements = (nodes, edges, direction = "TB") => {
       marginy: 80,
     });
 
-    // DAG
+    // DAG - Calcular dimensiones dinámicamente basado en si está expandido
+    const dagData = dagNode.data || {};
+    const isDAGExpanded = dagData.showParameters === true;
+    const dagParamsCount = dagData.parameterDefinitions
+      ? Object.keys(dagData.parameterDefinitions).length
+      : 0;
+    const dagParamHeight = 28;
+    
+    let dagWidth = 460; // Ancho base
+    let dagHeight = 180; // Alto base
+    
+    if (isDAGExpanded && dagParamsCount > 0) {
+      // Ajustar altura si está expandido
+      dagHeight += Math.min(dagParamsCount * dagParamHeight + 60, 400); // Max 400px extra
+    }
+    
     dagreGraph.setNode(dagId, {
-      width: 460,
-      height: 180,
+      width: dagWidth,
+      height: dagHeight,
     });
 
     // Tareas
@@ -218,6 +234,64 @@ const defaultEdgeOptions = {
 const defaultViewport = { x: 0, y: 0, zoom: 1 };
 const reactFlowStyle = { width: "100%", height: "100%" };
 
+// ID fijo para el nodo DAG por defecto
+const DEFAULT_DAG_NODE_ID = "dag_definition";
+
+// Función helper para crear el nodo DAG desde defaultDAG
+const createDefaultDAGNode = (handleNodeDelete) => {
+  const dagData = defaultDAG[0];
+  const dagNodeId = DEFAULT_DAG_NODE_ID;
+  
+  return {
+    id: dagNodeId,
+    type: "dagNode",
+    data: {
+      ...dagData,
+      id: dagNodeId,
+      task_id: dagData.label || "DAG Definition",
+      parameterDefinitions: dagData.parameters || {},
+      parameters: dagData.parameters
+        ? Object.entries(dagData.parameters).reduce((acc, [key, param]) => {
+            if (param.default !== undefined) {
+              acc[key] = param.default;
+            }
+            return acc;
+          }, {})
+        : {},
+      onUpdate: (updatedData) => {
+        // Esta función será actualizada cuando se setee el nodo
+      },
+      onDelete: handleNodeDelete,
+    },
+    position: { x: 0, y: 0 },
+    draggable: true, // Permitir arrastrar el nodo DAG
+    selectable: true,
+    deletable: false, // Marcarlo como no eliminable
+  };
+};
+
+// Función helper para asegurar que el DAG esté al inicio del array de nodos
+const ensureDAGAtStart = (nodes, handleNodeDelete, setNodesCallback = null) => {
+  const dagNodes = nodes.filter((n) => n.data?.type === "DAG");
+  const taskNodes = nodes.filter((n) => !n.data || n.data.type !== "DAG");
+  
+  // Si no hay nodo DAG, crear uno
+  let dagNode = dagNodes[0];
+  if (!dagNode) {
+    dagNode = createDefaultDAGNode(handleNodeDelete);
+  } else {
+    // Asegurar que el nodo DAG tenga las propiedades correctas
+    dagNode = {
+      ...dagNode,
+      draggable: true, // Permitir arrastrar
+      deletable: false,
+    };
+  }
+  
+  // Retornar array con DAG al inicio
+  return [dagNode, ...taskNodes];
+};
+
 export default function DagCanvas() {
   const [initialNodes, setInitialNodes] = useState([]);
   const [initialEdges, setInitialEdges] = useState([]);
@@ -233,7 +307,17 @@ export default function DagCanvas() {
   const reactFlowInstance = useRef(null);
 
   const handleNodeDelete = useCallback((nodeId) => {
-    setInitialNodes((nds) => nds.filter((node) => node.id !== nodeId));
+    // Prevenir eliminación del nodo DAG por defecto
+    if (nodeId === DEFAULT_DAG_NODE_ID) {
+      console.warn("No se puede eliminar el nodo DAG por defecto");
+      return;
+    }
+    
+    setInitialNodes((nds) => {
+      const filtered = nds.filter((node) => node.id !== nodeId);
+      // Asegurar que el DAG siga al inicio después de eliminar
+      return ensureDAGAtStart(filtered, handleNodeDelete);
+    });
     setInitialEdges((eds) =>
       eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
     );
@@ -249,26 +333,62 @@ export default function DagCanvas() {
         data: {
           ...node.data,
           onUpdate: (updatedData) => {
-            setInitialNodes((nds) =>
-              nds.map((n) =>
+            setInitialNodes((nds) => {
+              const updated = nds.map((n) =>
                 n.id === node.id
                   ? { ...n, data: { ...n.data, ...updatedData } }
                   : n,
-              ),
-            );
+              );
+              return ensureDAGAtStart(updated, handleNodeDelete);
+            });
           },
           onDelete: handleNodeDelete,
         },
       }));
 
-      setInitialNodes(restoredNodes);
+      // Asegurar que el DAG esté presente y al inicio
+      const nodesWithDAG = ensureDAGAtStart(restoredNodes, handleNodeDelete);
+      setInitialNodes(nodesWithDAG);
       setInitialEdges(savedState.edges || []);
+    } else {
+      // Si no hay estado guardado, inicializar con el nodo DAG por defecto
+      const defaultDAGNode = createDefaultDAGNode(handleNodeDelete);
+      defaultDAGNode.data.onUpdate = (updatedData) => {
+        setInitialNodes((nds) => {
+          const updated = nds.map((n) =>
+            n.id === defaultDAGNode.id
+              ? { ...n, data: { ...n.data, ...updatedData } }
+              : n,
+          );
+          return ensureDAGAtStart(updated, handleNodeDelete);
+        });
+      };
+      setInitialNodes([defaultDAGNode]);
     }
     // Marcar como cargado después de un pequeño delay para permitir que React procese
     setTimeout(() => {
       isInitialLoad.current = false;
     }, 100);
   }, [handleNodeDelete]);
+
+  // Wrapper para onNodesChange que previene eliminación del DAG
+  const onNodesChangeWithDAGProtection = useCallback(
+    (changes) => {
+      // Filtrar cambios que intenten eliminar el nodo DAG
+      const filteredChanges = changes.filter((change) => {
+        if (change.type === "remove" && change.id === DEFAULT_DAG_NODE_ID) {
+          console.warn("No se puede eliminar el nodo DAG por defecto");
+          return false;
+        }
+        // Permitir cambios de posición del DAG
+        return true;
+      });
+
+      // Aplicar cambios permitidos
+      onNodesChange(filteredChanges);
+    },
+    [onNodesChange],
+  );
 
   // Función para actualizar layout cuando cambian los nodos o edges
   useEffect(() => {
@@ -280,8 +400,19 @@ export default function DagCanvas() {
 
     // Calcular layout solo si hay nodos
     if (initialNodes.length > 0) {
+      // Asegurar que el DAG esté al inicio antes de calcular layout
+      const nodesWithDAG = ensureDAGAtStart(initialNodes, handleNodeDelete);
+      const dagIdsMatch = nodesWithDAG[0]?.id === initialNodes[0]?.id;
+      const lengthsMatch = nodesWithDAG.length === initialNodes.length;
+      
+      if (!dagIdsMatch || !lengthsMatch) {
+        // Si el DAG no está al inicio, actualizar initialNodes
+        setInitialNodes(nodesWithDAG);
+        return; // Retornar para que se recalcule con el array correcto
+      }
+      
       const { nodes: layoutedNodes, edges: layoutedEdges } =
-        getLayoutedElements(initialNodes, initialEdges, "TB");
+        getLayoutedElements(nodesWithDAG, initialEdges, "TB");
       setNodes(layoutedNodes);
       setEdges(layoutedEdges);
     } else {
@@ -289,7 +420,7 @@ export default function DagCanvas() {
       setNodes([]);
       setEdges([]);
     }
-  }, [initialNodes, initialEdges, setNodes, setEdges]);
+  }, [initialNodes, initialEdges, setNodes, setEdges, handleNodeDelete]);
 
   // Auto-guardar cuando cambian los nodos o edges (con debounce)
   useEffect(() => {
@@ -443,14 +574,18 @@ export default function DagCanvas() {
 
       // Crear nuevo nodo
       const newNodeId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Generar task_id que será usado como nombre del nodo
+      // Usar task_id de los parámetros si está disponible, sino usar label o generar uno
+      const newTaskId = data.parameters?.task_id?.default || data.label || `task_${initialNodes.length + 1}`;
       const newNode = {
         id: newNodeId,
         type: "dagNode",
         data: {
           ...data,
           id: newNodeId,
-          task_id:
-            `${data.id}_${Date.now()}` || `task_${initialNodes.length + 1}`,
+          task_id: newTaskId,
+          // Mostrar parámetros automáticamente al crear un nuevo nodo
+          showParameters: true,
           // Guardar definiciones de parámetros para poder editarlos
           parameterDefinitions: data.parameters || {},
           // Inicializar parámetros con valores por defecto
@@ -717,7 +852,10 @@ export default function DagCanvas() {
         }
       }
 
-      setInitialNodes((nds) => [...nds, newNode]);
+      setInitialNodes((nds) => {
+        const updated = [...nds, newNode];
+        return ensureDAGAtStart(updated, handleNodeDelete);
+      });
       setInitialEdges(newEdges);
     },
     [
@@ -1277,7 +1415,7 @@ export default function DagCanvas() {
             nodes={nodes}
             edges={edges}
             edgeTypes={edgeTypes}
-            onNodesChange={onNodesChange}
+            onNodesChange={onNodesChangeWithDAGProtection}
             onEdgesChange={onEdgesChangeWithSelection}
             onConnect={onConnect}
             onNodeDragStart={onNodeDragStart}

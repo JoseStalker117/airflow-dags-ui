@@ -12,6 +12,12 @@ export const databaseOperators = [
     category: "database",
     description: "Ejecuta comandos SQL en PostgreSQL",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "PostgreSQL",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,
@@ -52,6 +58,12 @@ export const databaseOperators = [
     category: "database",
     description: "Ejecuta una consulta SQL genérica (compatible con múltiples DBs)",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "SQL Execute",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,
@@ -86,6 +98,12 @@ export const databaseOperators = [
     category: "database",
     description: "Ejecuta comandos SQL en Oracle Database",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "Oracle",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,
@@ -120,6 +138,12 @@ export const databaseOperators = [
     category: "database",
     description: "Ejecuta comandos SQL en Microsoft SQL Server o Azure SQL",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "MSSQL / Azure SQL",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,
@@ -154,6 +178,12 @@ export const databaseOperators = [
     category: "database",
     description: "Ejecuta comandos SQL en MySQL",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "MySQL",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,

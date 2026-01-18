@@ -10,6 +10,12 @@ export const sensorOperators = [
     category: "sensor",
     description: "Espera hasta que un archivo exista",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "File Sensor",
+        description: "ID único de la tarea (task_id)"
+      },
       filepath: {
         type: "string",
         required: true,
@@ -44,6 +50,12 @@ export const sensorOperators = [
     category: "sensor",
     description: "Espera hasta que una clave S3 exista",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "S3 Key Sensor",
+        description: "ID único de la tarea (task_id)"
+      },
       bucket_key: {
         type: "string",
         required: true,
@@ -78,6 +90,12 @@ export const sensorOperators = [
     category: "sensor",
     description: "Espera hasta que una consulta SQL retorne resultados",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "SQL Sensor",
+        description: "ID único de la tarea (task_id)"
+      },
       sql: {
         type: "string",
         required: true,
@@ -106,6 +124,12 @@ export const sensorOperators = [
     category: "sensor",
     description: "Espera hasta que un endpoint HTTP esté disponible",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "HTTP Sensor",
+        description: "ID único de la tarea (task_id)"
+      },
       http_conn_id: {
         type: "string",
         required: true,

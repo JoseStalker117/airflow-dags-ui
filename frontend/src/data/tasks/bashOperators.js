@@ -10,6 +10,12 @@ export const bashOperators = [
     category: "bash",
     description: "Ejecuta un comando bash simple",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "Bash Command",
+        description: "ID único de la tarea (task_id)"
+      },
       bash_command: {
         type: "string",
         required: true,
@@ -38,6 +44,12 @@ export const bashOperators = [
     category: "bash",
     description: "Ejecuta un script bash",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "Bash Script",
+        description: "ID único de la tarea (task_id)"
+      },
       bash_command: {
         type: "string",
         required: true,

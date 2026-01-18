@@ -10,6 +10,12 @@ export const pythonOperators = [
     category: "python",
     description: "Ejecuta una función Python",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "Python Function",
+        description: "ID único de la tarea (task_id)"
+      },
       python_callable: {
         type: "string",
         required: true,
@@ -44,6 +50,12 @@ export const pythonOperators = [
     category: "python",
     description: "Ejecuta Python en un entorno virtual",
     parameters: {
+      task_id: {
+        type: "string",
+        required: true,
+        default: "Python VirtualEnv",
+        description: "ID único de la tarea (task_id)"
+      },
       python_callable: {
         type: "string",
         required: true,
