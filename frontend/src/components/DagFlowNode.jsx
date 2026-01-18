@@ -1,5 +1,5 @@
 import { Handle, Position } from "reactflow";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 /**
  * Nodo personalizado para el canvas de React Flow
@@ -8,8 +8,14 @@ import { useState } from "react";
  */
 export default function DagFlowNode({ data }) {
   const [taskName, setTaskName] = useState(data.task_id || data.label);
-  const [showParams, setShowParams] = useState(false);
+  const [showParams, setShowParams] = useState(data.showParameters ?? false);
   const [localParameters, setLocalParameters] = useState(data.parameters || {});
+
+  useEffect(() => {
+    if (data.showParameters !== undefined) {
+      setShowParams(data.showParameters);
+    }
+  }, [data.showParameters]);
 
   // Obtener icono y color según el tipo de operador (igual que TaskNode)
   const getOperatorInfo = (type) => {
@@ -31,7 +37,7 @@ export default function DagFlowNode({ data }) {
       HttpSensor: { icon: "http", color: "red" },
       DummyOperator: { icon: "radio_button_unchecked", color: "gray" },
       BranchPythonOperator: { icon: "call_split", color: "yellow" },
-      ShortCircuitOperator: { icon: "electric_bolt", color: "amber" }
+      ShortCircuitOperator: { icon: "electric_bolt", color: "amber" },
     };
 
     return operatorStyles[type] || { icon: "widgets", color: "slate" };
@@ -56,7 +62,7 @@ export default function DagFlowNode({ data }) {
     red: "bg-red-500",
     gray: "bg-gray-500",
     yellow: "bg-yellow-500",
-    slate: "bg-slate-500"
+    slate: "bg-slate-500",
   };
 
   const borderColorClasses = {
@@ -76,13 +82,18 @@ export default function DagFlowNode({ data }) {
     red: "border-red-300",
     gray: "border-gray-300",
     yellow: "border-yellow-300",
-    slate: "border-slate-300"
+    slate: "border-slate-300",
   };
 
-  const paramCount = localParameters ? Object.keys(localParameters).filter(
-    key => localParameters[key] !== undefined && localParameters[key] !== "" && 
-           (typeof localParameters[key] !== "object" || Object.keys(localParameters[key] || {}).length > 0)
-  ).length : 0;
+  const paramCount = localParameters
+    ? Object.keys(localParameters).filter(
+        (key) =>
+          localParameters[key] !== undefined &&
+          localParameters[key] !== "" &&
+          (typeof localParameters[key] !== "object" ||
+            Object.keys(localParameters[key] || {}).length > 0),
+      ).length
+    : 0;
 
   // Determinar si es un operador de branch
   const isBranch = data.type === "BranchPythonOperator";
@@ -90,7 +101,8 @@ export default function DagFlowNode({ data }) {
   const isDAG = data.type === "DAG";
 
   // Obtener definiciones de parámetros desde data (si están disponibles)
-  const parameterDefinitions = data.parameterDefinitions || data.parameters || {};
+  const parameterDefinitions =
+    data.parameterDefinitions || data.parameters || {};
 
   // Función para actualizar un parámetro
   const updateParameter = (key, value) => {
@@ -103,14 +115,21 @@ export default function DagFlowNode({ data }) {
 
   // Función para renderizar un campo de parámetro según su tipo
   const renderParameterField = (key, paramDef) => {
-    const value = localParameters[key] !== undefined ? localParameters[key] : (paramDef.default !== undefined ? paramDef.default : "");
+    const value =
+      localParameters[key] !== undefined
+        ? localParameters[key]
+        : paramDef.default !== undefined
+          ? paramDef.default
+          : "";
     const paramType = paramDef.type || "string";
 
     switch (paramType) {
       case "boolean":
         return (
           <div key={key} className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-700 w-32 truncate">{key}:</label>
+            <label className="text-xs font-medium text-slate-700 w-32 truncate">
+              {key}:
+            </label>
             <input
               type="checkbox"
               checked={value === true || value === "true"}
@@ -118,7 +137,9 @@ export default function DagFlowNode({ data }) {
               className="rounded"
             />
             {paramDef.description && (
-              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+              <span className="text-xs text-slate-500 italic">
+                {paramDef.description}
+              </span>
             )}
           </div>
         );
@@ -127,16 +148,25 @@ export default function DagFlowNode({ data }) {
       case "number":
         return (
           <div key={key} className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-700 w-32 truncate">{key}:</label>
+            <label className="text-xs font-medium text-slate-700 w-32 truncate">
+              {key}:
+            </label>
             <input
               type="number"
               value={value}
-              onChange={(e) => updateParameter(key, e.target.value ? Number(e.target.value) : "")}
+              onChange={(e) =>
+                updateParameter(
+                  key,
+                  e.target.value ? Number(e.target.value) : "",
+                )
+              }
               className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
               placeholder={paramDef.default}
             />
             {paramDef.description && (
-              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+              <span className="text-xs text-slate-500 italic">
+                {paramDef.description}
+              </span>
             )}
           </div>
         );
@@ -146,7 +176,9 @@ export default function DagFlowNode({ data }) {
           <div key={key} className="flex flex-col gap-1">
             <label className="text-xs font-medium text-slate-700">{key}:</label>
             <textarea
-              value={Array.isArray(value) ? JSON.stringify(value) : (value || "[]")}
+              value={
+                Array.isArray(value) ? JSON.stringify(value) : value || "[]"
+              }
               onChange={(e) => {
                 try {
                   const parsed = JSON.parse(e.target.value);
@@ -160,7 +192,9 @@ export default function DagFlowNode({ data }) {
               placeholder='["item1", "item2"]'
             />
             {paramDef.description && (
-              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+              <span className="text-xs text-slate-500 italic">
+                {paramDef.description}
+              </span>
             )}
           </div>
         );
@@ -170,7 +204,11 @@ export default function DagFlowNode({ data }) {
           <div key={key} className="flex flex-col gap-1">
             <label className="text-xs font-medium text-slate-700">{key}:</label>
             <textarea
-              value={typeof value === "object" ? JSON.stringify(value, null, 2) : (value || "{}")}
+              value={
+                typeof value === "object"
+                  ? JSON.stringify(value, null, 2)
+                  : value || "{}"
+              }
               onChange={(e) => {
                 try {
                   const parsed = JSON.parse(e.target.value);
@@ -184,7 +222,9 @@ export default function DagFlowNode({ data }) {
               placeholder='{"key": "value"}'
             />
             {paramDef.description && (
-              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+              <span className="text-xs text-slate-500 italic">
+                {paramDef.description}
+              </span>
             )}
           </div>
         );
@@ -192,7 +232,9 @@ export default function DagFlowNode({ data }) {
       default: // string
         return (
           <div key={key} className="flex items-center gap-2">
-            <label className="text-xs font-medium text-slate-700 w-32 truncate">{key}:</label>
+            <label className="text-xs font-medium text-slate-700 w-32 truncate">
+              {key}:
+            </label>
             <input
               type="text"
               value={value || ""}
@@ -201,7 +243,9 @@ export default function DagFlowNode({ data }) {
               placeholder={paramDef.default || ""}
             />
             {paramDef.description && (
-              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+              <span className="text-xs text-slate-500 italic">
+                {paramDef.description}
+              </span>
             )}
           </div>
         );
@@ -209,27 +253,31 @@ export default function DagFlowNode({ data }) {
   };
 
   return (
-    <div className={`bg-white rounded-lg shadow-lg border-2 ${borderColorClasses[operatorInfo.color]} 
-                    hover:shadow-xl transition-all ${isDAG ? 'min-w-[500px]' : 'min-w-[280px]'}
-                    ${isDAG ? 'bg-gradient-to-br from-indigo-50 to-purple-50' : ''}`}>
+    <div
+      className={`bg-white rounded-lg shadow-lg border-2 ${borderColorClasses[operatorInfo.color]} 
+                    hover:shadow-xl transition-all ${isDAG ? "min-w-[500px]" : "min-w-[280px]"}
+                    ${isDAG ? "bg-gradient-to-br from-indigo-50 to-purple-50" : ""}`}
+    >
       {/* Handle superior (entrada) - NO se muestra para nodos DAG */}
       {!isDAG && (
-        <Handle 
-          type="target" 
-          position={Position.Top} 
+        <Handle
+          type="target"
+          position={Position.Top}
           className="w-4 h-4 !bg-slate-500 hover:!bg-blue-500 !border-2 !border-white transition-colors"
-          style={{ width: '16px', height: '16px', borderRadius: '50%' }}
+          style={{ width: "16px", height: "16px", borderRadius: "50%" }}
         />
       )}
 
       {/* Contenido del nodo */}
-      <div className={`p-3 ${isDAG ? 'pb-3' : ''}`}>
+      <div className={`p-3 ${isDAG ? "pb-3" : ""}`}>
         {isDAG ? (
           /* Header especial para DAG */
           <>
             <div className="border-b-2 border-indigo-200 pb-3 mb-3">
               <div className="flex items-start gap-2">
-                <div className={`${colorClasses[operatorInfo.color]} rounded-lg p-2 flex-shrink-0`}>
+                <div
+                  className={`${colorClasses[operatorInfo.color]} rounded-lg p-2 flex-shrink-0`}
+                >
                   <span className="material-symbols-outlined text-white text-lg">
                     {operatorInfo.icon}
                   </span>
@@ -249,7 +297,9 @@ export default function DagFlowNode({ data }) {
                     placeholder={data.label}
                   />
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-indigo-600 font-mono truncate">{data.type}</span>
+                    <span className="text-xs text-indigo-600 font-mono truncate">
+                      {data.type}
+                    </span>
                   </div>
                 </div>
                 <div className="flex gap-1">
@@ -272,31 +322,39 @@ export default function DagFlowNode({ data }) {
                       className="text-red-500 hover:bg-red-50 rounded p-1 transition-colors flex-shrink-0"
                       title="Eliminar DAG"
                     >
-                      <span className="material-symbols-outlined text-xs">close</span>
+                      <span className="material-symbols-outlined text-xs">
+                        close
+                      </span>
                     </button>
                   )}
                 </div>
               </div>
             </div>
-            
+
             {/* Panel de parámetros para DAG */}
-            {showParams && parameterDefinitions && Object.keys(parameterDefinitions).length > 0 && (
-              <div className="mt-3 pt-3 border-t border-indigo-200 space-y-2 max-h-[400px] overflow-y-auto">
-                {Object.entries(parameterDefinitions).map(([key, paramDef]) => {
-                  if (typeof paramDef === "object" && paramDef !== null) {
-                    return renderParameterField(key, paramDef);
-                  }
-                  return null;
-                })}
-              </div>
-            )}
+            {showParams &&
+              parameterDefinitions &&
+              Object.keys(parameterDefinitions).length > 0 && (
+                <div className="mt-3 pt-3 border-t border-indigo-200 space-y-2 max-h-[400px] overflow-y-auto">
+                  {Object.entries(parameterDefinitions).map(
+                    ([key, paramDef]) => {
+                      if (typeof paramDef === "object" && paramDef !== null) {
+                        return renderParameterField(key, paramDef);
+                      }
+                      return null;
+                    },
+                  )}
+                </div>
+              )}
           </>
         ) : (
           /* Contenido normal para otros nodos */
           <>
             <div className="flex items-start gap-2">
               {/* Icono del operador */}
-              <div className={`${colorClasses[operatorInfo.color]} rounded-lg p-1.5 flex-shrink-0`}>
+              <div
+                className={`${colorClasses[operatorInfo.color]} rounded-lg p-1.5 flex-shrink-0`}
+              >
                 <span className="material-symbols-outlined text-white text-sm">
                   {operatorInfo.icon}
                 </span>
@@ -318,7 +376,9 @@ export default function DagFlowNode({ data }) {
                   placeholder={data.label}
                 />
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs text-slate-500 font-mono truncate">{data.type}</span>
+                  <span className="text-xs text-slate-500 font-mono truncate">
+                    {data.type}
+                  </span>
                 </div>
               </div>
 
@@ -345,23 +405,29 @@ export default function DagFlowNode({ data }) {
                     className="text-red-500 hover:bg-red-50 rounded p-1 transition-colors flex-shrink-0"
                     title="Eliminar tarea"
                   >
-                    <span className="material-symbols-outlined text-xs">close</span>
+                    <span className="material-symbols-outlined text-xs">
+                      close
+                    </span>
                   </button>
                 )}
               </div>
             </div>
 
             {/* Panel de parámetros para tareas */}
-            {showParams && parameterDefinitions && Object.keys(parameterDefinitions).length > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-200 space-y-2 max-h-[300px] overflow-y-auto">
-                {Object.entries(parameterDefinitions).map(([key, paramDef]) => {
-                  if (typeof paramDef === "object" && paramDef !== null) {
-                    return renderParameterField(key, paramDef);
-                  }
-                  return null;
-                })}
-              </div>
-            )}
+            {showParams &&
+              parameterDefinitions &&
+              Object.keys(parameterDefinitions).length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-200 space-y-2 max-h-[300px] overflow-y-auto">
+                  {Object.entries(parameterDefinitions).map(
+                    ([key, paramDef]) => {
+                      if (typeof paramDef === "object" && paramDef !== null) {
+                        return renderParameterField(key, paramDef);
+                      }
+                      return null;
+                    },
+                  )}
+                </div>
+              )}
           </>
         )}
       </div>
@@ -370,39 +436,47 @@ export default function DagFlowNode({ data }) {
       {isDAG ? (
         /* Handle de salida para DAG - permite múltiples conexiones */
         <div className="flex justify-center pb-2">
-          <Handle 
-            type="source" 
-            position={Position.Bottom} 
+          <Handle
+            type="source"
+            position={Position.Bottom}
             className="!bg-indigo-500 hover:!bg-indigo-600 !border-2 !border-white transition-colors"
-            style={{ width: '16px', height: '16px', borderRadius: '50%' }}
+            style={{ width: "16px", height: "16px", borderRadius: "50%" }}
+          />
+        </div>
+      ) : isBranch ? (
+        <div className="flex justify-center gap-2 pb-2 px-2">
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="true"
+            className="!bg-green-500 hover:!bg-green-600 !border-2 !border-white transition-colors"
+            style={{
+              width: "16px",
+              height: "16px",
+              borderRadius: "50%",
+              left: "40%",
+            }}
+          />
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="false"
+            className="!bg-red-500 hover:!bg-red-600 !border-2 !border-white transition-colors"
+            style={{
+              width: "16px",
+              height: "16px",
+              borderRadius: "50%",
+              left: "60%",
+            }}
           />
         </div>
       ) : (
-        isBranch ? (
-          <div className="flex justify-center gap-2 pb-2 px-2">
-            <Handle 
-              type="source" 
-              position={Position.Bottom} 
-              id="true"
-              className="!bg-green-500 hover:!bg-green-600 !border-2 !border-white transition-colors"
-              style={{ width: '16px', height: '16px', borderRadius: '50%', left: '40%' }}
-            />
-            <Handle 
-              type="source" 
-              position={Position.Bottom} 
-              id="false"
-              className="!bg-red-500 hover:!bg-red-600 !border-2 !border-white transition-colors"
-              style={{ width: '16px', height: '16px', borderRadius: '50%', left: '60%' }}
-            />
-          </div>
-        ) : (
-          <Handle 
-            type="source" 
-            position={Position.Bottom} 
-            className="!bg-slate-500 hover:!bg-blue-500 !border-2 !border-white transition-colors"
-            style={{ width: '16px', height: '16px', borderRadius: '50%' }}
-          />
-        )
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className="!bg-slate-500 hover:!bg-blue-500 !border-2 !border-white transition-colors"
+          style={{ width: "16px", height: "16px", borderRadius: "50%" }}
+        />
       )}
     </div>
   );
