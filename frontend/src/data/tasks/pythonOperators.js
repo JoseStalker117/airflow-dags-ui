@@ -6,6 +6,7 @@ export const pythonOperators = [
     id: "branch_operator",
     label: "Branch",
     type: "BranchPythonOperator",
+    favoritos: true,
     icon: "call_split",
     category: "common",
     description: "Ejecuta diferentes tareas basado en una condición Python",

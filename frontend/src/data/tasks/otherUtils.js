@@ -4,9 +4,9 @@
 
 export const otherUtils = [
   {
-    id: "file_sensor",
-    label: "File Sensor",
-    type: "FileSensor",
+    id: "otras_utilidades",
+    label: "Otros_ejemplo",
+    type: "utils",
     icon: "sensors",
     category: "sensor",
     description: "Espera hasta que un archivo exista",

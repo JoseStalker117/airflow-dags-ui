@@ -2,112 +2,86 @@
  * SQL Operators - Operadores para ejecutar consultas SQL
  */
 export const sqlOperators = [
-  {
-    id: "sql_execute",
-    label: "SQL Execute",
-    type: "SQLExecuteQueryOperator",
-    icon: "database",
+  { // Descarga AWS
+    id: "S3DownloadOperator",
+    favoritos: false,
+    label: "Descarga AWS",
+    type: "AWS",
+    icon: "storage",
     category: "sql",
-    description: "Ejecuta una consulta SQL",
+    description: "Descargar archivo de Amazon Services",
     parameters: {
       task_id: {
         type: "string",
         required: true,
-        default: "SQL Execute",
-        description: "ID único de la tarea (task_id)"
+        default: "descarga-aws",
+        description: "ID único de la tarea (task_id)",
       },
-      sql: {
+      aws_conn_id: {
         type: "string",
         required: true,
-        default: "SELECT 1",
-        description: "Consulta SQL a ejecutar"
+        default: "default",
+        description: "Variable de conexión AWS",
       },
-      conn_id: {
+      bucket_name: {
         type: "string",
         required: true,
-        default: "postgres_default",
-        description: "ID de la conexión de base de datos"
+        default: "bucket_name",
+        description: "Bucket o directorio de descarga",
       },
-      parameters: {
-        type: "object",
-        required: false,
-        default: {},
-        description: "Parámetros para la consulta SQL"
+      s3_key: {
+        type: "string",
+        required: true,
+        default: "cortes/febrero/dir_batch.txt",
+        description: "Direccion de archivo a descargar",
       },
-      autocommit: {
-        type: "boolean",
-        required: false,
-        default: false,
-        description: "Ejecutar en modo autocommit"
-      }
-    }
+      local_filepath: {
+        type: "string",
+        required: true,
+        default: "/home/airflow/out/respuestas/local_batch.txt",
+        description: "Ruta local de descarga",
+      },
+    },
   },
-  {
-    id: "postgres_operator",
-    label: "PostgreSQL",
-    type: "PostgresOperator",
+  { // Descarga Blop
+    id: "AzureBlobDownloadOperator",
+    favoritos: false,
+    label: "AzureBlobDownloadOperator",
+    type: "Azure",
     icon: "storage",
     category: "sql",
     description: "Ejecuta SQL en PostgreSQL",
     parameters: {
-      sql: {
-        type: "string",
-        required: true,
-        default: "",
-        description: "Consulta SQL"
-      },
-      postgres_conn_id: {
-        type: "string",
-        required: true,
-        default: "postgres_default",
-        description: "ID de conexión PostgreSQL"
-      },
-      parameters: {
-        type: "object",
-        required: false,
-        default: {},
-        description: "Parámetros SQL"
-      }
-    }
-  },
-  {
-    id: "bigquery_operator",
-    label: "BigQuery",
-    type: "BigQueryOperator",
-    icon: "cloud",
-    category: "sql",
-    description: "Ejecuta consultas en BigQuery",
-    parameters: {
       task_id: {
         type: "string",
         required: true,
-        default: "BigQuery",
-        description: "ID único de la tarea (task_id)"
+        default: "descarga-azure",
+        description: "ID único de la tarea (task_id)",
       },
-      sql: {
+      sas_url: {
         type: "string",
         required: true,
-        default: "",
-        description: "Consulta SQL de BigQuery"
+        default: "blob_azure",
+        description: "URL de Azure.",
       },
-      gcp_conn_id: {
+      container_name: {
         type: "string",
         required: true,
-        default: "google_cloud_default",
-        description: "ID de conexión GCP"
+        default: "lake",
+        description: "Nombre del contenedor.",
       },
-      use_legacy_sql: {
-        type: "boolean",
-        required: false,
-        default: false,
-        description: "Usar SQL legacy"
-      },
-      destination_dataset_table: {
+      blob_names: {
         type: "string",
-        required: false,
-        default: "",
-        description: "Tabla destino (dataset.tablename)"
-      }
-    }
-  }
+        required: true,
+        default: "sd_archivos_azure",
+        description: "Directorio/archivo a descargar",
+      },
+      download_path: {
+        type: "string",
+        required: true,
+        default: "/opt/airflow/out/azure/",
+        description: "Directorio local de descarga",
+      },
+    },
+  },
 ];

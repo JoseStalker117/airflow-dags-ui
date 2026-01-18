@@ -7,7 +7,7 @@ export const transferOperators = [
   {
     id: "sftp_transfer",
     label: "SFTP Transfer",
-    favoritos: false,
+    favoritos: true,
     type: "SFTPOperator",
     icon: "📁",
     category: "sftp",
@@ -22,7 +22,7 @@ export const transferOperators = [
       },
       ssh_conn_id: {
         type: "string",
-        required: false,
+        required: true,
         description: "ID de conexión SSH/SFTP",
       },
       remote_host: {

@@ -4,10 +4,10 @@
  */
 
 export const airflowOperators = [
-  {
+  { // Dummy Task
     id: "dummy_operator",
     label: "Dummy Task",
-    favoritos: true,
+    favoritos: false,
     type: "DummyOperator",
     icon: "circle",
     category: "util",
@@ -22,11 +22,10 @@ export const airflowOperators = [
       },
     },
   },
-
-  {
+  { // Bash Operator
     id: "bash_operator",
     label: "Bash Command",
-    favoritos: false,
+    favoritos: true,
     type: "BashOperator",
     icon: "terminal",
     category: "util",
@@ -45,7 +44,7 @@ export const airflowOperators = [
       },
     },
   },
-  {
+  { // Empty Operator
     id: "empty_operator",
     label: "Empty Task",
     favoritos: false,
@@ -63,8 +62,7 @@ export const airflowOperators = [
       },
     },
   },
-
-  {
+  { // Trigger DAG
     id: "trigger_dag_operator",
     label: "Trigger DAG",
     favoritos: false,
