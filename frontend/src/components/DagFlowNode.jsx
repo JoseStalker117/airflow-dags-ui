@@ -4,9 +4,12 @@ import { useState } from "react";
 /**
  * Nodo personalizado para el canvas de React Flow
  * Mantiene los colores de borde y estilo del TaskNode original
+ * Incluye panel de parámetros editables
  */
 export default function DagFlowNode({ data }) {
   const [taskName, setTaskName] = useState(data.task_id || data.label);
+  const [showParams, setShowParams] = useState(false);
+  const [localParameters, setLocalParameters] = useState(data.parameters || {});
 
   // Obtener icono y color según el tipo de operador (igual que TaskNode)
   const getOperatorInfo = (type) => {
@@ -76,8 +79,9 @@ export default function DagFlowNode({ data }) {
     slate: "border-slate-300"
   };
 
-  const paramCount = data.parameters ? Object.keys(data.parameters).filter(
-    key => data.parameters[key] !== undefined && data.parameters[key] !== ""
+  const paramCount = localParameters ? Object.keys(localParameters).filter(
+    key => localParameters[key] !== undefined && localParameters[key] !== "" && 
+           (typeof localParameters[key] !== "object" || Object.keys(localParameters[key] || {}).length > 0)
   ).length : 0;
 
   // Determinar si es un operador de branch
@@ -85,9 +89,128 @@ export default function DagFlowNode({ data }) {
   // Determinar si es un nodo DAG (contenedor)
   const isDAG = data.type === "DAG";
 
+  // Obtener definiciones de parámetros desde data (si están disponibles)
+  const parameterDefinitions = data.parameterDefinitions || data.parameters || {};
+
+  // Función para actualizar un parámetro
+  const updateParameter = (key, value) => {
+    const updated = { ...localParameters, [key]: value };
+    setLocalParameters(updated);
+    if (data.onUpdate) {
+      data.onUpdate({ ...data, parameters: updated });
+    }
+  };
+
+  // Función para renderizar un campo de parámetro según su tipo
+  const renderParameterField = (key, paramDef) => {
+    const value = localParameters[key] !== undefined ? localParameters[key] : (paramDef.default !== undefined ? paramDef.default : "");
+    const paramType = paramDef.type || "string";
+
+    switch (paramType) {
+      case "boolean":
+        return (
+          <div key={key} className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-700 w-32 truncate">{key}:</label>
+            <input
+              type="checkbox"
+              checked={value === true || value === "true"}
+              onChange={(e) => updateParameter(key, e.target.checked)}
+              className="rounded"
+            />
+            {paramDef.description && (
+              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+            )}
+          </div>
+        );
+
+      case "integer":
+      case "number":
+        return (
+          <div key={key} className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-700 w-32 truncate">{key}:</label>
+            <input
+              type="number"
+              value={value}
+              onChange={(e) => updateParameter(key, e.target.value ? Number(e.target.value) : "")}
+              className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
+              placeholder={paramDef.default}
+            />
+            {paramDef.description && (
+              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+            )}
+          </div>
+        );
+
+      case "array":
+        return (
+          <div key={key} className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-700">{key}:</label>
+            <textarea
+              value={Array.isArray(value) ? JSON.stringify(value) : (value || "[]")}
+              onChange={(e) => {
+                try {
+                  const parsed = JSON.parse(e.target.value);
+                  updateParameter(key, parsed);
+                } catch {
+                  updateParameter(key, e.target.value);
+                }
+              }}
+              className="text-xs border border-gray-300 rounded px-2 py-1 resize-none"
+              rows={2}
+              placeholder='["item1", "item2"]'
+            />
+            {paramDef.description && (
+              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+            )}
+          </div>
+        );
+
+      case "object":
+        return (
+          <div key={key} className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-700">{key}:</label>
+            <textarea
+              value={typeof value === "object" ? JSON.stringify(value, null, 2) : (value || "{}")}
+              onChange={(e) => {
+                try {
+                  const parsed = JSON.parse(e.target.value);
+                  updateParameter(key, parsed);
+                } catch {
+                  updateParameter(key, e.target.value);
+                }
+              }}
+              className="text-xs font-mono border border-gray-300 rounded px-2 py-1 resize-none"
+              rows={3}
+              placeholder='{"key": "value"}'
+            />
+            {paramDef.description && (
+              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+            )}
+          </div>
+        );
+
+      default: // string
+        return (
+          <div key={key} className="flex items-center gap-2">
+            <label className="text-xs font-medium text-slate-700 w-32 truncate">{key}:</label>
+            <input
+              type="text"
+              value={value || ""}
+              onChange={(e) => updateParameter(key, e.target.value)}
+              className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
+              placeholder={paramDef.default || ""}
+            />
+            {paramDef.description && (
+              <span className="text-xs text-slate-500 italic">{paramDef.description}</span>
+            )}
+          </div>
+        );
+    }
+  };
+
   return (
     <div className={`bg-white rounded-lg shadow-lg border-2 ${borderColorClasses[operatorInfo.color]} 
-                    hover:shadow-xl transition-all ${isDAG ? 'min-w-[400px] min-h-[300px]' : 'min-w-[220px]'}
+                    hover:shadow-xl transition-all ${isDAG ? 'min-w-[500px]' : 'min-w-[280px]'}
                     ${isDAG ? 'bg-gradient-to-br from-indigo-50 to-purple-50' : ''}`}>
       {/* Handle superior (entrada) - NO se muestra para nodos DAG */}
       {!isDAG && (
@@ -100,16 +223,86 @@ export default function DagFlowNode({ data }) {
       )}
 
       {/* Contenido del nodo */}
-      <div className={`p-3 ${isDAG ? 'pb-6' : ''}`}>
+      <div className={`p-3 ${isDAG ? 'pb-3' : ''}`}>
         {isDAG ? (
           /* Header especial para DAG */
-          <div className="border-b-2 border-indigo-200 pb-3 mb-3">
+          <>
+            <div className="border-b-2 border-indigo-200 pb-3 mb-3">
+              <div className="flex items-start gap-2">
+                <div className={`${colorClasses[operatorInfo.color]} rounded-lg p-2 flex-shrink-0`}>
+                  <span className="material-symbols-outlined text-white text-lg">
+                    {operatorInfo.icon}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <input
+                    type="text"
+                    value={taskName}
+                    onChange={(e) => {
+                      setTaskName(e.target.value);
+                      if (data.onUpdate) {
+                        data.onUpdate({ ...data, task_id: e.target.value });
+                      }
+                    }}
+                    className="font-bold text-lg text-indigo-900 bg-transparent border-none 
+                             focus:outline-none focus:ring-1 focus:ring-indigo-400 rounded px-1 w-full"
+                    placeholder={data.label}
+                  />
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-indigo-600 font-mono truncate">{data.type}</span>
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setShowParams(!showParams)}
+                    className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                      showParams
+                        ? "bg-indigo-100 text-indigo-700"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                    title="Ver/Editar parámetros"
+                  >
+                    <span className="material-symbols-outlined text-sm align-middle">
+                      {showParams ? "expand_less" : "expand_more"}
+                    </span>
+                  </button>
+                  {data.onDelete && (
+                    <button
+                      onClick={() => data.onDelete(data.id)}
+                      className="text-red-500 hover:bg-red-50 rounded p-1 transition-colors flex-shrink-0"
+                      title="Eliminar DAG"
+                    >
+                      <span className="material-symbols-outlined text-xs">close</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            {/* Panel de parámetros para DAG */}
+            {showParams && parameterDefinitions && Object.keys(parameterDefinitions).length > 0 && (
+              <div className="mt-3 pt-3 border-t border-indigo-200 space-y-2 max-h-[400px] overflow-y-auto">
+                {Object.entries(parameterDefinitions).map(([key, paramDef]) => {
+                  if (typeof paramDef === "object" && paramDef !== null) {
+                    return renderParameterField(key, paramDef);
+                  }
+                  return null;
+                })}
+              </div>
+            )}
+          </>
+        ) : (
+          /* Contenido normal para otros nodos */
+          <>
             <div className="flex items-start gap-2">
-              <div className={`${colorClasses[operatorInfo.color]} rounded-lg p-2 flex-shrink-0`}>
-                <span className="material-symbols-outlined text-white text-lg">
+              {/* Icono del operador */}
+              <div className={`${colorClasses[operatorInfo.color]} rounded-lg p-1.5 flex-shrink-0`}>
+                <span className="material-symbols-outlined text-white text-sm">
                   {operatorInfo.icon}
                 </span>
               </div>
+
+              {/* Información principal */}
               <div className="flex-1 min-w-0">
                 <input
                   type="text"
@@ -120,81 +313,71 @@ export default function DagFlowNode({ data }) {
                       data.onUpdate({ ...data, task_id: e.target.value });
                     }
                   }}
-                  className="font-bold text-lg text-indigo-900 bg-transparent border-none 
-                           focus:outline-none focus:ring-1 focus:ring-indigo-400 rounded px-1 w-full"
+                  className="font-semibold text-sm text-slate-800 bg-transparent border-none 
+                           focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 w-full"
                   placeholder={data.label}
                 />
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-indigo-600 font-mono truncate">{data.type}</span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs text-slate-500 font-mono truncate">{data.type}</span>
                 </div>
               </div>
-              {data.onDelete && (
-                <button
-                  onClick={() => data.onDelete(data.id)}
-                  className="text-red-500 hover:bg-red-50 rounded p-1 transition-colors flex-shrink-0"
-                  title="Eliminar DAG"
-                >
-                  <span className="material-symbols-outlined text-xs">close</span>
-                </button>
-              )}
-            </div>
-            {paramCount > 0 && (
-              <div className="mt-2 text-xs text-indigo-600">
-                <span className="font-medium">{paramCount}</span> {paramCount === 1 ? "parámetro configurado" : "parámetros configurados"}
+
+              {/* Botones */}
+              <div className="flex gap-1">
+                {paramCount > 0 && (
+                  <button
+                    onClick={() => setShowParams(!showParams)}
+                    className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+                      showParams
+                        ? "bg-blue-100 text-blue-700"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                    title="Ver/Editar parámetros"
+                  >
+                    <span className="material-symbols-outlined text-xs align-middle">
+                      {showParams ? "expand_less" : "expand_more"}
+                    </span>
+                  </button>
+                )}
+                {data.onDelete && (
+                  <button
+                    onClick={() => data.onDelete(data.id)}
+                    className="text-red-500 hover:bg-red-50 rounded p-1 transition-colors flex-shrink-0"
+                    title="Eliminar tarea"
+                  >
+                    <span className="material-symbols-outlined text-xs">close</span>
+                  </button>
+                )}
               </div>
-            )}
-          </div>
-        ) : (
-          /* Contenido normal para otros nodos */
-          <div className="flex items-start gap-2">
-            {/* Icono del operador */}
-            <div className={`${colorClasses[operatorInfo.color]} rounded-lg p-1.5 flex-shrink-0`}>
-              <span className="material-symbols-outlined text-white text-sm">
-                {operatorInfo.icon}
-              </span>
             </div>
 
-            {/* Información principal */}
-            <div className="flex-1 min-w-0">
-              <input
-                type="text"
-                value={taskName}
-                onChange={(e) => {
-                  setTaskName(e.target.value);
-                  if (data.onUpdate) {
-                    data.onUpdate({ ...data, task_id: e.target.value });
+            {/* Panel de parámetros para tareas */}
+            {showParams && parameterDefinitions && Object.keys(parameterDefinitions).length > 0 && (
+              <div className="mt-3 pt-3 border-t border-gray-200 space-y-2 max-h-[300px] overflow-y-auto">
+                {Object.entries(parameterDefinitions).map(([key, paramDef]) => {
+                  if (typeof paramDef === "object" && paramDef !== null) {
+                    return renderParameterField(key, paramDef);
                   }
-                }}
-                className="font-semibold text-sm text-slate-800 bg-transparent border-none 
-                         focus:outline-none focus:ring-1 focus:ring-blue-400 rounded px-1 w-full"
-                placeholder={data.label}
-              />
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs text-slate-500 font-mono truncate">{data.type}</span>
+                  return null;
+                })}
               </div>
-              {paramCount > 0 && (
-                <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full mt-1 inline-block">
-                  {paramCount} {paramCount === 1 ? "param" : "params"}
-                </span>
-              )}
-            </div>
-
-            {/* Botón eliminar */}
-            {data.onDelete && (
-              <button
-                onClick={() => data.onDelete(data.id)}
-                className="text-red-500 hover:bg-red-50 rounded p-1 transition-colors flex-shrink-0"
-                title="Eliminar tarea"
-              >
-                <span className="material-symbols-outlined text-xs">close</span>
-              </button>
             )}
-          </div>
+          </>
         )}
       </div>
 
-      {/* Handle inferior (salida) - NO se muestra para nodos DAG */}
-      {!isDAG && (
+      {/* Handle inferior (salida) - Para DAG permite múltiples conexiones */}
+      {isDAG ? (
+        /* Handle de salida para DAG - permite múltiples conexiones */
+        <div className="flex justify-center pb-2">
+          <Handle 
+            type="source" 
+            position={Position.Bottom} 
+            className="!bg-indigo-500 hover:!bg-indigo-600 !border-2 !border-white transition-colors"
+            style={{ width: '16px', height: '16px', borderRadius: '50%' }}
+          />
+        </div>
+      ) : (
         isBranch ? (
           <div className="flex justify-center gap-2 pb-2 px-2">
             <Handle 
