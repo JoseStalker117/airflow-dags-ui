@@ -1,75 +1,327 @@
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useRef, useState, useEffect, useCallback } from "react";
 import TopBar from "../components/TopBar";
 import BlockPalette from "../components/BlockPalette";
 import DagCanvas from "../components/DagCanvas";
 import { clearCanvasState, saveCanvasState, loadCanvasState } from "../utils/storage";
 import { saveUserPreferences, loadUserPreferences } from "../utils/storage";
-
-function handleTopBarAction(action, canvasRef) {
-  switch (action) {
-    case "newDag":
-      if (window.confirm("¿Estás seguro de que quieres crear un nuevo DAG? Se perderán los cambios no guardados.")) {
-        clearCanvasState();
-        window.location.reload(); // Recargar para limpiar el canvas
-      }
-      break;
-    case "openDag":
-      console.log("Abrir DAG - Funcionalidad por implementar");
-      break;
-    case "saveDag":
-      console.log("Guardar DAG - Auto-guardado activo");
-      break;
-    case "saveAsDag":
-      console.log("Guardar DAG Como...");
-      break;
-    case "exportDag":
-      console.log("Exportar DAG Python");
-      break;
-    case "exportJson":
-      console.log("Exportar JSON");
-      break;
-    case "exportYaml":
-      console.log("Exportar YAML");
-      break;
-    case "validateDag":
-      console.log("Validar DAG");
-      break;
-    case "formatDag":
-      console.log("Formatear DAG");
-      break;
-    case "optimizeDag":
-      console.log("Optimizar DAG");
-      break;
-    case "openSettings":
-      console.log("Abrir Configuración");
-      break;
-    case "openPreferences":
-      console.log("Abrir Preferencias");
-      break;
-    case "showAbout":
-      console.log("Mostrar Acerca de");
-      break;
-    default:
-      console.log(`Acción no reconocida: ${action}`);
-  }
-}
+import { dagService, dagLogger } from "../services/dagService";
 
 export default function Home() {
   const canvasRef = useRef(null);
   const paletteRef = useRef(null);
+  const fileInputRef = useRef(null);
+  
   const [paletteWidth, setPaletteWidth] = useState(() => {
     const saved = loadUserPreferences();
-    return saved?.paletteWidth || 288; // 72 * 4 = 288px (w-72)
+    return saved?.paletteWidth || 288;
   });
+  
   const [isResizing, setIsResizing] = useState(false);
+  const [notification, setNotification] = useState(null);
 
-  // Guardar ancho del palete en preferencias
+  // ============== HELPERS ==============
+  
+  // Obtener datos del canvas
+  const getCanvasData = useCallback(() => {
+    if (!canvasRef.current) {
+      return { nodes: [], edges: [] };
+    }
+    
+    // Intenta obtener los datos usando los métodos de ReactFlow
+    try {
+      // Método 1: Si DagCanvas expone getNodes/getEdges
+      if (canvasRef.current.getNodes && canvasRef.current.getEdges) {
+        return {
+          nodes: canvasRef.current.getNodes(),
+          edges: canvasRef.current.getEdges()
+        };
+      }
+      
+      // Método 2: Si DagCanvas usa useReactFlow internamente
+      if (canvasRef.current.reactFlowInstance) {
+        const instance = canvasRef.current.reactFlowInstance;
+        return {
+          nodes: instance.getNodes(),
+          edges: instance.getEdges()
+        };
+      }
+      
+      // Método 3: Desde localStorage (fallback)
+      const savedState = loadCanvasState();
+      return {
+        nodes: savedState?.nodes || [],
+        edges: savedState?.edges || []
+      };
+    } catch (error) {
+      console.warn('No se pudieron obtener datos del canvas:', error);
+      return { nodes: [], edges: [] };
+    }
+  }, []);
+
+  // Aplicar datos al canvas
+  const setCanvasData = useCallback((nodes, edges) => {
+    if (!canvasRef.current) return;
+    
+    try {
+      // Método 1: Si DagCanvas expone setNodes/setEdges
+      if (canvasRef.current.setNodes && canvasRef.current.setEdges) {
+        canvasRef.current.setNodes(nodes);
+        canvasRef.current.setEdges(edges);
+      }
+      // Método 2: Si DagCanvas usa reactFlowInstance
+      else if (canvasRef.current.reactFlowInstance) {
+        const instance = canvasRef.current.reactFlowInstance;
+        instance.setNodes(nodes);
+        instance.setEdges(edges);
+      }
+      
+      // Guardar en localStorage
+      saveCanvasState({ nodes, edges });
+    } catch (error) {
+      console.error('Error al aplicar datos al canvas:', error);
+    }
+  }, []);
+
+  // Mostrar notificación
+  const showNotif = useCallback((message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  }, []);
+
+  // ============== MANEJADOR DE ACCIONES ==============
+  
+  const handleTopBarAction = useCallback(async (action) => {
+    const { nodes, edges } = getCanvasData();
+    
+    try {
+      switch (action) {
+        case "newDag":
+          if (window.confirm("¿Estás seguro de que quieres crear un nuevo DAG? Se perderán los cambios no guardados.")) {
+            clearCanvasState();
+            dagLogger.log('newDag', 'success', { message: 'Nuevo DAG creado' });
+            window.location.reload();
+          }
+          break;
+
+        case "openDag":
+          // Trigger file input
+          if (fileInputRef.current) {
+            fileInputRef.current.click();
+          }
+          break;
+
+        case "saveDag":
+          try {
+            // Guardar localmente primero
+            saveCanvasState({ nodes, edges });
+            
+            // Intentar guardar en backend
+            const result = await dagService.saveToBackend(nodes, edges, 'Mi DAG');
+            
+            if (result.success) {
+              showNotif('✅ DAG guardado exitosamente');
+              dagLogger.log('saveDag', 'success', { 
+                nodeCount: nodes.length,
+                edgeCount: edges.length 
+              });
+            } else {
+              showNotif(`⚠️ Guardado local OK, backend: ${result.error}`, 'warning');
+              dagLogger.log('saveDag', 'warning', { 
+                error: result.error,
+                message: 'Guardado solo local' 
+              });
+            }
+          } catch (error) {
+            // Si falla el backend, al menos guardamos local
+            saveCanvasState({ nodes, edges });
+            showNotif('✅ DAG guardado localmente', 'warning');
+            dagLogger.log('saveDag', 'warning', { 
+              error: error.message,
+              message: 'Solo guardado local' 
+            });
+          }
+          break;
+
+        case "saveAsDag":
+          const dagName = prompt("Nombre del DAG:", `dag_${Date.now()}`);
+          if (dagName) {
+            const result = await dagService.saveToBackend(nodes, edges, dagName);
+            if (result.success) {
+              showNotif(`✅ Guardado como: ${dagName}`);
+              dagLogger.log('saveAsDag', 'success', { dagName });
+            } else {
+              showNotif(`❌ Error: ${result.error}`, 'error');
+              dagLogger.log('saveAsDag', 'error', { error: result.error });
+            }
+          }
+          break;
+
+        case "exportDag":
+          const pythonFilename = `dag_${Date.now()}.py`;
+          dagService.exportToPython(nodes, edges, pythonFilename);
+          showNotif(`🐍 Exportado: ${pythonFilename}`);
+          dagLogger.log('exportDag', 'success', { 
+            filename: pythonFilename,
+            nodeCount: nodes.length 
+          });
+          break;
+
+        case "exportJson":
+          const jsonFilename = `dag_${Date.now()}.json`;
+          dagService.exportToJSON(nodes, edges, jsonFilename);
+          showNotif(`📄 Exportado: ${jsonFilename}`);
+          dagLogger.log('exportJson', 'success', { 
+            filename: jsonFilename,
+            nodeCount: nodes.length 
+          });
+          break;
+
+        case "exportYaml":
+          const yamlFilename = `dag_${Date.now()}.yaml`;
+          dagService.exportToYAML(nodes, edges, yamlFilename);
+          showNotif(`📋 Exportado: ${yamlFilename}`);
+          dagLogger.log('exportYaml', 'success', { 
+            filename: yamlFilename,
+            nodeCount: nodes.length 
+          });
+          break;
+
+        case "copyJson":
+          const copyResult = await dagService.copyToClipboard(nodes, edges);
+          if (copyResult.success) {
+            showNotif('📋 JSON copiado al portapapeles');
+            dagLogger.log('copyJson', 'success', { 
+              nodeCount: copyResult.nodeCount,
+              edgeCount: copyResult.edgeCount 
+            });
+          } else {
+            showNotif(`❌ Error al copiar`, 'error');
+            dagLogger.log('copyJson', 'error', { error: copyResult.error });
+          }
+          break;
+
+        case "validateDag":
+          const validation = dagService.validateDAG(nodes, edges);
+          
+          let alertMessage = validation.valid 
+            ? '✅ DAG VÁLIDO\n\n' 
+            : '❌ DAG INVÁLIDO\n\n';
+          
+          if (validation.errors.length > 0) {
+            alertMessage += `Errores:\n${validation.errors.map(e => `  • ${e}`).join('\n')}\n\n`;
+          }
+          
+          if (validation.warnings.length > 0) {
+            alertMessage += `Advertencias:\n${validation.warnings.map(w => `  ⚠️ ${w}`).join('\n')}`;
+          }
+          
+          alert(alertMessage);
+          
+          showNotif(
+            validation.valid ? '✅ DAG válido' : '❌ DAG inválido',
+            validation.valid ? 'success' : 'error'
+          );
+          
+          dagLogger.log('validateDag', validation.valid ? 'success' : 'error', {
+            errors: validation.errors,
+            warnings: validation.warnings,
+            nodeCount: nodes.length,
+            edgeCount: edges.length
+          });
+          break;
+
+        case "formatDag":
+          // TODO: Implementar formateo automático
+          showNotif('⚙️ Función en desarrollo', 'warning');
+          dagLogger.log('formatDag', 'pending', { 
+            message: 'Función por implementar' 
+          });
+          break;
+
+        case "optimizeDag":
+          // TODO: Implementar optimización
+          showNotif('⚙️ Función en desarrollo', 'warning');
+          dagLogger.log('optimizeDag', 'pending', { 
+            message: 'Función por implementar' 
+          });
+          break;
+
+        case "openSettings":
+          showNotif('⚙️ Configuración en desarrollo', 'warning');
+          break;
+
+        case "openPreferences":
+          showNotif('⚙️ Preferencias en desarrollo', 'warning');
+          break;
+
+        case "showAbout":
+          alert(`DAG Builder v1.0
+          
+📊 Creado con React Flow
+🔧 Gestión visual de DAGs para Apache Airflow
+
+Estado actual:
+  • Nodos: ${nodes.length}
+  • Conexiones: ${edges.length}
+  • Operaciones registradas: ${dagLogger.getLogs().length}
+
+Desarrollado con ❤️`);
+          break;
+
+        default:
+          console.log(`Acción no reconocida: ${action}`);
+          dagLogger.log(action, 'pending', { 
+            message: `Acción "${action}" no implementada` 
+          });
+      }
+    } catch (error) {
+      console.error(`Error en acción ${action}:`, error);
+      showNotif(`❌ Error: ${error.message}`, 'error');
+      dagLogger.log(action, 'error', { error: error.message });
+    }
+  }, [getCanvasData, setCanvasData, showNotif]);
+
+  // ============== IMPORTAR ARCHIVO ==============
+  
+  const handleFileImport = useCallback(async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    try {
+      const result = await dagService.importFromFile(file);
+      
+      if (result.success) {
+        // Aplicar datos al canvas
+        setCanvasData(result.data.nodes, result.data.edges);
+        
+        showNotif(`✅ Importado: ${result.filename}`);
+        dagLogger.log('openDag', 'success', { 
+          filename: result.filename,
+          nodeCount: result.data.nodes.length,
+          edgeCount: result.data.edges.length
+        });
+      }
+    } catch (error) {
+      showNotif(`❌ Error al importar: ${error.message}`, 'error');
+      dagLogger.log('openDag', 'error', { 
+        error: error.message,
+        filename: file.name 
+      });
+    }
+    
+    // Limpiar input
+    event.target.value = '';
+  }, [setCanvasData, showNotif]);
+
+  // ============== GUARDAR PREFERENCIAS ==============
+  
   useEffect(() => {
     saveUserPreferences({ paletteWidth });
   }, [paletteWidth]);
 
-  // Manejar el redimensionamiento
+  // ============== REDIMENSIONAMIENTO ==============
+  
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
     setIsResizing(true);
@@ -103,10 +355,8 @@ export default function Home() {
     };
   }, [isResizing]);
 
-  const handleAction = (action) => {
-    handleTopBarAction(action, canvasRef);
-  };
-
+  // ============== RENDER ==============
+  
   return (
     <motion.div
       initial={{ opacity: 0, filter: "blur(12px)", scale: 0.98 }}
@@ -115,8 +365,52 @@ export default function Home() {
       transition={{ duration: 1, ease: "easeOut" }}
       className="h-screen w-full flex flex-col bg-gray-100"
     >
-      <TopBar onAction={handleAction} />
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        onChange={handleFileImport}
+        className="hidden"
+      />
 
+      {/* Notification Toast */}
+      <AnimatePresence>
+        {notification && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 20, scale: 1 }}
+            exit={{ opacity: 0, y: -50, scale: 0.9 }}
+            transition={{ type: "spring", damping: 20, stiffness: 300 }}
+            className="fixed top-0 right-4 z-[100] pointer-events-none"
+          >
+            <div className={`
+              px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 min-w-[300px]
+              ${notification.type === 'error' 
+                ? 'bg-red-500 text-white' 
+                : notification.type === 'warning'
+                ? 'bg-yellow-500 text-white'
+                : 'bg-green-500 text-white'
+              }
+            `}>
+              <span className="material-symbols-outlined text-2xl">
+                {notification.type === 'error' 
+                  ? 'error' 
+                  : notification.type === 'warning'
+                  ? 'warning'
+                  : 'check_circle'
+                }
+              </span>
+              <span className="font-medium flex-1">{notification.message}</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* TopBar */}
+      <TopBar onAction={handleTopBarAction} />
+
+      {/* Main Content */}
       <div className="flex flex-1 overflow-hidden relative">
         {/* BlockPalette con ancho dinámico */}
         <div 

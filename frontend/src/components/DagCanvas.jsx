@@ -14,6 +14,256 @@ import DagFlowNode from "./DagFlowNode";
 import { saveCanvasState, loadCanvasState } from "../utils/storage";
 import { defaultDAG } from "../data/tasks/defaultDAG";
 
+// ============================================================================
+// UTILIDADES DE VALIDACIÓN Y DETECCIÓN DE CICLOS
+// ============================================================================
+
+/**
+ * Detecta si agregar una arista crearía un ciclo en el grafo
+ */
+const wouldCreateCycle = (sourceId, targetId, edges) => {
+  if (sourceId === targetId) return true;
+
+  const visited = new Set();
+  const queue = [targetId];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+
+    if (current === sourceId) return true;
+    if (visited.has(current)) continue;
+
+    visited.add(current);
+
+    const outgoing = edges.filter((e) => e.source === current);
+    outgoing.forEach((e) => {
+      if (!visited.has(e.target)) {
+        queue.push(e.target);
+      }
+    });
+  }
+
+  return false;
+};
+
+/**
+ * Valida la integridad del DAG
+ */
+const validateDAG = (nodes, edges) => {
+  const dagNodes = nodes.filter((n) => n.data?.type === "DAG");
+
+  // Detectar ciclos
+  const cycles = [];
+  edges.forEach((edge) => {
+    const restEdges = edges.filter((e) => e.id !== edge.id);
+    if (wouldCreateCycle(edge.target, edge.source, restEdges)) {
+      cycles.push(edge);
+    }
+  });
+
+  // Encontrar nodos huérfanos (sin conexiones)
+  const connectedNodes = new Set();
+  edges.forEach((e) => {
+    connectedNodes.add(e.source);
+    connectedNodes.add(e.target);
+  });
+
+  const orphanNodes = nodes.filter(
+    (n) => !connectedNodes.has(n.id) && n.data?.type !== "DAG",
+  );
+
+  return {
+    isValid: cycles.length === 0 && dagNodes.length === 1,
+    hasCycles: cycles.length > 0,
+    cycleEdges: cycles,
+    hasOrphanNodes: orphanNodes.length > 0,
+    orphanNodes,
+    hasMultipleDAGs: dagNodes.length > 1,
+    dagCount: dagNodes.length,
+  };
+};
+
+// ============================================================================
+// UTILIDADES DE RECONEXIÓN DE NODOS
+// ============================================================================
+
+/**
+ * Reconecta un nodo insertándolo ANTES del nodo objetivo
+ */
+const reconnectAbove = (movedNodeId, targetNode, edges, nodes) => {
+  const incomingToTarget = edges.find((e) => e.target === targetNode.id);
+  let newEdges = edges.filter(
+    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
+  );
+
+  if (incomingToTarget) {
+    newEdges = newEdges.filter((e) => e.id !== incomingToTarget.id);
+
+    const sourceNodeData = nodes.find((n) => n.id === incomingToTarget.source);
+    const isFromDAG = sourceNodeData?.data?.type === "DAG";
+    const isFromBranch = sourceNodeData?.data?.type === "BranchPythonOperator";
+
+    let strokeColor = "#64748b";
+    if (isFromDAG) strokeColor = "#6366f1";
+    else if (isFromBranch) {
+      strokeColor =
+        incomingToTarget.sourceHandle === "true"
+          ? "#22c55e"
+          : incomingToTarget.sourceHandle === "false"
+            ? "#ef4444"
+            : "#64748b";
+    }
+
+    newEdges.push({
+      id: `e${incomingToTarget.source}-${incomingToTarget.sourceHandle || ""}-${movedNodeId}`,
+      source: incomingToTarget.source,
+      sourceHandle: incomingToTarget.sourceHandle,
+      target: movedNodeId,
+      type: "smoothstep",
+      animated: true,
+      style: { stroke: strokeColor, strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
+    });
+  }
+
+  newEdges.push({
+    id: `e${movedNodeId}-${targetNode.id}`,
+    source: movedNodeId,
+    target: targetNode.id,
+    type: "smoothstep",
+    animated: true,
+    style: { stroke: "#64748b", strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+  });
+
+  return newEdges;
+};
+
+/**
+ * Reconecta un nodo insertándolo DESPUÉS del nodo objetivo
+ */
+const reconnectBelow = (movedNodeId, targetNode, edges, nodes) => {
+  const isTargetBranch = targetNode.data?.type === "BranchPythonOperator";
+  if (isTargetBranch) return edges;
+
+  let newEdges = edges.filter(
+    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
+  );
+
+  const outgoingFromTarget = edges.find((e) => e.source === targetNode.id);
+
+  if (outgoingFromTarget) {
+    newEdges = newEdges.filter((e) => e.id !== outgoingFromTarget.id);
+
+    newEdges.push({
+      id: `e${movedNodeId}-${outgoingFromTarget.target}`,
+      source: movedNodeId,
+      target: outgoingFromTarget.target,
+      type: "smoothstep",
+      animated: true,
+      style: { stroke: "#64748b", strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+    });
+  }
+
+  const isTargetDAG = targetNode.data?.type === "DAG";
+  const strokeColor = isTargetDAG ? "#6366f1" : "#64748b";
+
+  newEdges.push({
+    id: `e${targetNode.id}-${movedNodeId}`,
+    source: targetNode.id,
+    target: movedNodeId,
+    type: "smoothstep",
+    animated: true,
+    style: { stroke: strokeColor, strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
+  });
+
+  return newEdges;
+};
+
+/**
+ * Reconecta un nodo en una rama de BranchPythonOperator
+ */
+const reconnectBranch = (movedNodeId, targetNode, branch, edges) => {
+  const handleId = branch === "true" ? "true" : "false";
+  const strokeColor = branch === "true" ? "#22c55e" : "#ef4444";
+
+  let newEdges = edges.filter(
+    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
+  );
+
+  const existingBranchEdge = edges.find(
+    (e) => e.source === targetNode.id && e.sourceHandle === handleId,
+  );
+
+  if (existingBranchEdge) {
+    newEdges = newEdges.filter((e) => e.id !== existingBranchEdge.id);
+
+    newEdges.push({
+      id: `e${movedNodeId}-${existingBranchEdge.target}`,
+      source: movedNodeId,
+      target: existingBranchEdge.target,
+      type: "smoothstep",
+      animated: true,
+      style: { stroke: "#64748b", strokeWidth: 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+    });
+  }
+
+  newEdges.push({
+    id: `e${targetNode.id}-${handleId}-${movedNodeId}`,
+    source: targetNode.id,
+    sourceHandle: handleId,
+    target: movedNodeId,
+    type: "smoothstep",
+    animated: true,
+    style: { stroke: strokeColor, strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
+  });
+
+  return newEdges;
+};
+
+/**
+ * Limpia las conexiones de un nodo que está siendo movido
+ */
+const cleanupMovedNodeConnections = (movedNodeId, edges) => {
+  const incoming = edges.find((e) => e.target === movedNodeId);
+  const outgoing = edges.find((e) => e.source === movedNodeId);
+
+  let cleanedEdges = edges.filter(
+    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
+  );
+
+  if (incoming && outgoing && incoming.source !== outgoing.target) {
+    const connectionExists = cleanedEdges.some(
+      (e) =>
+        e.source === incoming.source &&
+        e.target === outgoing.target &&
+        e.sourceHandle === incoming.sourceHandle,
+    );
+
+    if (!connectionExists) {
+      cleanedEdges.push({
+        id: `e${incoming.source}-${incoming.sourceHandle || ""}-${outgoing.target}`,
+        source: incoming.source,
+        sourceHandle: incoming.sourceHandle,
+        target: outgoing.target,
+        type: "smoothstep",
+        animated: true,
+        style: incoming.style || { stroke: "#64748b", strokeWidth: 2 },
+        markerEnd: incoming.markerEnd || {
+          type: MarkerType.ArrowClosed,
+          color: "#64748b",
+        },
+      });
+    }
+  }
+
+  return cleanedEdges;
+};
+
 // Configuración del layout de árbol
 const getLayoutedElements = (nodes, edges, direction = "TB") => {
   if (!nodes || nodes.length === 0) {
@@ -48,15 +298,15 @@ const getLayoutedElements = (nodes, edges, direction = "TB") => {
       ? Object.keys(dagData.parameterDefinitions).length
       : 0;
     const dagParamHeight = 28;
-    
+
     let dagWidth = 460; // Ancho base
     let dagHeight = 180; // Alto base
-    
+
     if (isDAGExpanded && dagParamsCount > 0) {
       // Ajustar altura si está expandido
       dagHeight += Math.min(dagParamsCount * dagParamHeight + 60, 400); // Max 400px extra
     }
-    
+
     dagreGraph.setNode(dagId, {
       width: dagWidth,
       height: dagHeight,
@@ -241,7 +491,7 @@ const DEFAULT_DAG_NODE_ID = "dag_definition";
 const createDefaultDAGNode = (handleNodeDelete) => {
   const dagData = defaultDAG[0];
   const dagNodeId = DEFAULT_DAG_NODE_ID;
-  
+
   return {
     id: dagNodeId,
     type: "dagNode",
@@ -274,7 +524,7 @@ const createDefaultDAGNode = (handleNodeDelete) => {
 const ensureDAGAtStart = (nodes, handleNodeDelete, setNodesCallback = null) => {
   const dagNodes = nodes.filter((n) => n.data?.type === "DAG");
   const taskNodes = nodes.filter((n) => !n.data || n.data.type !== "DAG");
-  
+
   // Si no hay nodo DAG, crear uno
   let dagNode = dagNodes[0];
   if (!dagNode) {
@@ -287,7 +537,7 @@ const ensureDAGAtStart = (nodes, handleNodeDelete, setNodesCallback = null) => {
       deletable: false,
     };
   }
-  
+
   // Retornar array con DAG al inicio
   return [dagNode, ...taskNodes];
 };
@@ -302,143 +552,189 @@ export default function DagCanvas() {
   const [isNodeDragging, setIsNodeDragging] = useState(false); // Para arrastre interno de nodos
   const [draggingNodeId, setDraggingNodeId] = useState(null); // ID del nodo que se está arrastrando
   const [dropZonePreview, setDropZonePreview] = useState(null); // { nodeId, zone: 'above' | 'below' }
-  const isInitialLoad = useRef(true);
+  const [notification, setNotification] = useState(null);
+  const [validationErrors, setValidationErrors] = useState(null);
+  const isInitializedRef = useRef(false);
   const saveTimeoutRef = useRef(null);
   const reactFlowInstance = useRef(null);
 
-  const handleNodeDelete = useCallback((nodeId) => {
-    // Prevenir eliminación del nodo DAG por defecto
-    if (nodeId === DEFAULT_DAG_NODE_ID) {
-      console.warn("No se puede eliminar el nodo DAG por defecto");
-      return;
-    }
-    
-    setInitialNodes((nds) => {
-      const filtered = nds.filter((node) => node.id !== nodeId);
-      // Asegurar que el DAG siga al inicio después de eliminar
-      return ensureDAGAtStart(filtered, handleNodeDelete);
-    });
-    setInitialEdges((eds) =>
-      eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
-    );
+  const showNotification = useCallback((message, type = "info") => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
   }, []);
 
-  // Cargar estado guardado al montar el componente
+  const handleNodeDelete = useCallback(
+    (nodeId) => {
+      if (nodeId === DEFAULT_DAG_NODE_ID) {
+        showNotification("No se puede eliminar el nodo DAG principal", "error");
+        return;
+      }
+
+      setInitialNodes((prev) => {
+        const filtered = prev.filter((node) => node.id !== nodeId);
+        return ensureDAGAtStart(filtered, handleNodeDelete);
+      });
+
+      setInitialEdges((prev) =>
+        prev.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
+      );
+
+      showNotification("Nodo eliminado correctamente", "success");
+    },
+    [ensureDAGAtStart, showNotification],
+  );
+
   useEffect(() => {
+    if (isInitializedRef.current) return;
+
     const savedState = loadCanvasState();
-    if (savedState && savedState.nodes && savedState.nodes.length > 0) {
-      // Restaurar nodos con sus funciones onUpdate/onDelete
+
+    if (savedState?.nodes?.length > 0) {
       const restoredNodes = savedState.nodes.map((node) => ({
         ...node,
         data: {
           ...node.data,
           onUpdate: (updatedData) => {
-            setInitialNodes((nds) => {
-              const updated = nds.map((n) =>
+            setInitialNodes((prev) =>
+              prev.map((n) =>
                 n.id === node.id
                   ? { ...n, data: { ...n.data, ...updatedData } }
                   : n,
-              );
-              return ensureDAGAtStart(updated, handleNodeDelete);
-            });
+              ),
+            );
           },
           onDelete: handleNodeDelete,
         },
       }));
 
-      // Asegurar que el DAG esté presente y al inicio
       const nodesWithDAG = ensureDAGAtStart(restoredNodes, handleNodeDelete);
       setInitialNodes(nodesWithDAG);
       setInitialEdges(savedState.edges || []);
+      showNotification("Estado cargado correctamente", "success");
     } else {
-      // Si no hay estado guardado, inicializar con el nodo DAG por defecto
-      const defaultDAGNode = createDefaultDAGNode(handleNodeDelete);
-      defaultDAGNode.data.onUpdate = (updatedData) => {
-        setInitialNodes((nds) => {
-          const updated = nds.map((n) =>
-            n.id === defaultDAGNode.id
-              ? { ...n, data: { ...n.data, ...updatedData } }
-              : n,
-          );
-          return ensureDAGAtStart(updated, handleNodeDelete);
-        });
+      const dagData = defaultDAG[0];
+      const defaultDAGNode = {
+        id: DEFAULT_DAG_NODE_ID,
+        type: "dagNode",
+        data: {
+          ...dagData,
+          id: DEFAULT_DAG_NODE_ID,
+          task_id: dagData.label || "DAG Definition",
+          parameterDefinitions: dagData.parameters || {},
+          parameters: dagData.parameters
+            ? Object.entries(dagData.parameters).reduce((acc, [key, param]) => {
+                if (param.default !== undefined) {
+                  acc[key] = param.default;
+                }
+                return acc;
+              }, {})
+            : {},
+          onUpdate: (updatedData) => {
+            setInitialNodes((prev) =>
+              prev.map((n) =>
+                n.id === DEFAULT_DAG_NODE_ID
+                  ? { ...n, data: { ...n.data, ...updatedData } }
+                  : n,
+              ),
+            );
+          },
+          onDelete: handleNodeDelete,
+        },
+        position: { x: 0, y: 0 },
+        draggable: true,
+        selectable: true,
+        deletable: false,
       };
+
       setInitialNodes([defaultDAGNode]);
     }
-    // Marcar como cargado después de un pequeño delay para permitir que React procese
-    setTimeout(() => {
-      isInitialLoad.current = false;
-    }, 100);
-  }, [handleNodeDelete]);
 
-  // Wrapper para onNodesChange que previene eliminación del DAG
+    isInitializedRef.current = true;
+  }, [handleNodeDelete, ensureDAGAtStart, showNotification]);
+
   const onNodesChangeWithDAGProtection = useCallback(
     (changes) => {
-      // Filtrar cambios que intenten eliminar el nodo DAG
-      const filteredChanges = changes.filter((change) => {
+      const filtered = changes.filter((change) => {
         if (change.type === "remove" && change.id === DEFAULT_DAG_NODE_ID) {
-          console.warn("No se puede eliminar el nodo DAG por defecto");
+          showNotification("No se puede eliminar el nodo DAG", "error");
           return false;
         }
-        // Permitir cambios de posición del DAG
         return true;
       });
 
-      // Aplicar cambios permitidos
-      onNodesChange(filteredChanges);
+      onNodesChange(filtered);
     },
-    [onNodesChange],
+    [onNodesChange, showNotification],
   );
 
   // Función para actualizar layout cuando cambian los nodos o edges
   useEffect(() => {
-    // Si está cargando inicialmente y no hay nodos, esperar
-    // Pero si hay nodos (aunque sea carga inicial), calcular layout
-    if (isInitialLoad.current && initialNodes.length === 0) {
-      return; // Esperar a que termine la carga inicial solo si no hay nodos
-    }
-
-    // Calcular layout solo si hay nodos
-    if (initialNodes.length > 0) {
-      // Asegurar que el DAG esté al inicio antes de calcular layout
-      const nodesWithDAG = ensureDAGAtStart(initialNodes, handleNodeDelete);
-      const dagIdsMatch = nodesWithDAG[0]?.id === initialNodes[0]?.id;
-      const lengthsMatch = nodesWithDAG.length === initialNodes.length;
-      
-      if (!dagIdsMatch || !lengthsMatch) {
-        // Si el DAG no está al inicio, actualizar initialNodes
-        setInitialNodes(nodesWithDAG);
-        return; // Retornar para que se recalcule con el array correcto
-      }
-      
-      const { nodes: layoutedNodes, edges: layoutedEdges } =
-        getLayoutedElements(nodesWithDAG, initialEdges, "TB");
-      setNodes(layoutedNodes);
-      setEdges(layoutedEdges);
-    } else {
-      // Si no hay nodos, limpiar el estado
+    if (!isInitializedRef.current) return;
+    if (initialNodes.length === 0) {
       setNodes([]);
       setEdges([]);
+      return;
     }
-  }, [initialNodes, initialEdges, setNodes, setEdges, handleNodeDelete]);
+
+    const nodesWithDAG = ensureDAGAtStart(initialNodes, handleNodeDelete);
+    const needsUpdate =
+      nodesWithDAG[0]?.id !== initialNodes[0]?.id ||
+      nodesWithDAG.length !== initialNodes.length;
+
+    if (needsUpdate) {
+      setInitialNodes(nodesWithDAG);
+      return;
+    }
+
+    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+      nodesWithDAG,
+      initialEdges,
+      "TB",
+    );
+
+    setNodes(layoutedNodes);
+    setEdges(layoutedEdges);
+
+    // Validar DAG
+    const validation = validateDAG(layoutedNodes, layoutedEdges);
+    if (!validation.isValid) {
+      setValidationErrors(validation);
+      if (validation.hasCycles) {
+        showNotification(
+          "¡Advertencia! Se detectaron ciclos en el DAG",
+          "warning",
+        );
+      }
+    } else {
+      setValidationErrors(null);
+    }
+  }, [
+    initialNodes,
+    initialEdges,
+    setNodes,
+    setEdges,
+    handleNodeDelete,
+    ensureDAGAtStart,
+    showNotification,
+  ]);
 
   // Auto-guardar cuando cambian los nodos o edges (con debounce)
   useEffect(() => {
-    if (isInitialLoad.current) {
-      return;
-    }
+    if (!isInitializedRef.current) return;
 
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
 
     saveTimeoutRef.current = setTimeout(() => {
-      const saved = saveCanvasState(initialNodes, initialEdges);
-      if (saved) {
-        console.log("✅ Canvas guardado en localStorage:", {
-          nodes: initialNodes.length,
-          edges: initialEdges.length,
-        });
+      try {
+        const saved = saveCanvasState(initialNodes, initialEdges);
+        if (!saved) {
+          showNotification("Error al guardar el estado", "error");
+        }
+      } catch (error) {
+        console.error("Error crítico guardando:", error);
+        showNotification("Error crítico al guardar", "error");
       }
     }, 500);
 
@@ -447,7 +743,7 @@ export default function DagCanvas() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [initialNodes, initialEdges]);
+  }, [initialNodes, initialEdges, showNotification]);
 
   // Manejar eliminación de edges con tecla Supr
   useEffect(() => {
@@ -457,16 +753,17 @@ export default function DagCanvas() {
         selectedEdgeId
       ) {
         event.preventDefault();
-        setInitialEdges((eds) =>
-          eds.filter((edge) => edge.id !== selectedEdgeId),
+        setInitialEdges((prev) =>
+          prev.filter((edge) => edge.id !== selectedEdgeId),
         );
         setSelectedEdgeId(null);
+        showNotification("Conexión eliminada", "success");
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedEdgeId]);
+  }, [selectedEdgeId, showNotification]);
 
   // Función para verificar si un nodo ya tiene una conexión saliente
   const hasOutgoingEdge = useCallback(
@@ -486,54 +783,41 @@ export default function DagCanvas() {
 
   // Función para encontrar el nodo más cercano y determinar la zona de drop
   // Zonas posibles: 'above', 'below', 'branch-true', 'branch-false'
-  const findDropZone = useCallback(
-    (dropY, dropX, excludeNodeId = null) => {
+  // Función para encontrar el nodo más cercano y determinar la zona de drop
+  // Zonas posibles: 'above', 'below', 'branch-true', 'branch-false'
+  const findDropZone = useMemo(() => {
+    return (dropY, dropX, excludeNodeId = null) => {
       if (nodes.length === 0) return null;
 
       let closestNode = null;
       let minDistance = Infinity;
-      let dropZone = "below"; // 'above', 'below', 'branch-true', 'branch-false'
+      let dropZone = "below";
 
       nodes.forEach((node) => {
-        if (node.data?.type === "DAG") return; // Ignorar DAG
-        if (excludeNodeId && node.id === excludeNodeId) return; // Ignorar el nodo que se está arrastrando
+        if (node.data?.type === "DAG") return;
+        if (excludeNodeId && node.id === excludeNodeId) return;
 
-        const nodeY = node.position.y;
         const nodeHeight =
           node.data?.type === "BranchPythonOperator" ? 120 : 100;
-        const nodeX = node.position.x;
         const nodeWidth = 280;
-        const nodeCenterX = nodeX + nodeWidth / 2;
-        const nodeCenterY = nodeY + nodeHeight / 2;
+        const nodeCenterX = node.position.x + nodeWidth / 2;
+        const nodeCenterY = node.position.y + nodeHeight / 2;
         const isBranch = node.data?.type === "BranchPythonOperator";
 
-        // Calcular distancia euclidiana al centro del nodo
         const distanceX = Math.abs(dropX - nodeCenterX);
         const distanceY = Math.abs(dropY - nodeCenterY);
         const distance = Math.sqrt(
           distanceX * distanceX + distanceY * distanceY,
         );
 
-        // Solo considerar nodos dentro de un rango razonable (300px)
         if (distance < 300 && distance < minDistance) {
           minDistance = distance;
           closestNode = node;
 
-          // Determinar zona basada en posición relativa
           if (dropY < nodeCenterY) {
             dropZone = "above";
           } else if (isBranch) {
-            // Para BranchPythonOperator, determinar si es rama true (izquierda) o false (derecha)
-            // Los handles están en 40% (true) y 60% (false) del ancho
-            const trueHandleX = nodeX + nodeWidth * 0.4;
-            const falseHandleX = nodeX + nodeWidth * 0.6;
-
-            // Si está debajo del nodo, determinar qué rama
-            if (dropX < nodeCenterX) {
-              dropZone = "branch-true"; // Lado izquierdo = true (verde)
-            } else {
-              dropZone = "branch-false"; // Lado derecho = false (rojo)
-            }
+            dropZone = dropX < nodeCenterX ? "branch-true" : "branch-false";
           } else {
             dropZone = "below";
           }
@@ -541,24 +825,24 @@ export default function DagCanvas() {
       });
 
       return closestNode ? { node: closestNode, zone: dropZone } : null;
-    },
-    [nodes],
-  );
+    };
+  }, [nodes]);
 
   const handleDrop = useCallback(
     (e) => {
       e.preventDefault();
       setIsDragging(false);
       setDropZonePreview(null);
-      const raw = e.dataTransfer.getData("block");
 
+      const raw = e.dataTransfer.getData("block");
       if (!raw) return;
 
       let data;
       try {
         data = JSON.parse(raw);
       } catch (err) {
-        console.error("Error parseando drag block:", raw, err);
+        console.error("Error parseando drag block:", err);
+        showNotification("Error al procesar el bloque", "error");
         return;
       }
 
@@ -576,7 +860,10 @@ export default function DagCanvas() {
       const newNodeId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       // Generar task_id que será usado como nombre del nodo
       // Usar task_id de los parámetros si está disponible, sino usar label o generar uno
-      const newTaskId = data.parameters?.task_id?.default || data.label || `task_${initialNodes.length + 1}`;
+      const newTaskId =
+        data.parameters?.task_id?.default ||
+        data.label ||
+        `task_${initialNodes.length + 1}`;
       const newNode = {
         id: newNodeId,
         type: "dagNode",
@@ -619,6 +906,20 @@ export default function DagCanvas() {
 
       if (dropZoneInfo && !isDAG) {
         const { node: targetNode, zone } = dropZoneInfo;
+        // Validar que no se cree un ciclo
+        if (zone === "above") {
+          const incomingToTarget = initialEdges.find(
+            (e) => e.target === targetNode.id,
+          );
+          if (
+            incomingToTarget &&
+            wouldCreateCycle(incomingToTarget.source, newNodeId, initialEdges)
+          ) {
+            showNotification("No se puede crear: generaría un ciclo", "error");
+            return;
+          }
+        }
+
         const isTargetBranch = targetNode.data?.type === "BranchPythonOperator";
 
         // Manejar inserción en ramas de BranchPythonOperator
@@ -852,66 +1153,60 @@ export default function DagCanvas() {
         }
       }
 
-      setInitialNodes((nds) => {
-        const updated = [...nds, newNode];
+      setInitialNodes((prev) => {
+        const updated = [...prev, newNode];
         return ensureDAGAtStart(updated, handleNodeDelete);
       });
       setInitialEdges(newEdges);
+      showNotification("Nodo agregado correctamente", "success");
     },
     [
       initialNodes,
       initialEdges,
       handleNodeDelete,
-      hasOutgoingEdge,
-      nodes,
       findDropZone,
+      ensureDAGAtStart,
+      showNotification,
     ],
   );
 
   const onConnect = useCallback(
     (params) => {
-      // Verificar si el nodo origen ya tiene una conexión saliente (excepto branches y DAG)
-      const sourceNode = initialNodes.find((n) => n.id === params.source);
-      const isBranch = sourceNode?.data?.type === "BranchPythonOperator";
-      const isDAGSource = sourceNode?.data?.type === "DAG";
-
-      // Verificar si el nodo destino ya tiene una conexión entrante
-      const targetNode = initialNodes.find((n) => n.id === params.target);
-      const isDAGTarget = targetNode?.data?.type === "DAG";
-
-      // Prevenir conexiones a un DAG (no tiene handle de entrada)
-      if (isDAGTarget) {
-        console.warn("No se puede conectar nada a un nodo DAG");
+      // Validar ciclos
+      if (wouldCreateCycle(params.source, params.target, initialEdges)) {
+        showNotification("No se puede conectar: crearía un ciclo", "error");
         return;
       }
 
-      // Remover conexiones anteriores antes de crear la nueva
-      setInitialEdges((eds) => {
-        // Remover conexión anterior del target (si existe y viene de otro source)
-        let filteredEdges = eds.filter(
-          (edge) =>
-            !(edge.target === params.target && edge.source !== params.source),
+      const sourceNode = initialNodes.find((n) => n.id === params.source);
+      const targetNode = initialNodes.find((n) => n.id === params.target);
+      const isDAGTarget = targetNode?.data?.type === "DAG";
+
+      if (isDAGTarget) {
+        showNotification("No se puede conectar a un nodo DAG", "error");
+        return;
+      }
+
+      const isDAGSource = sourceNode?.data?.type === "DAG";
+      const isBranch = sourceNode?.data?.type === "BranchPythonOperator";
+
+      setInitialEdges((prev) => {
+        let filtered = prev.filter(
+          (e) => !(e.target === params.target && e.source !== params.source),
         );
 
-        // Remover conexión anterior del source (excepto branches y DAG que permiten múltiples)
         if (!isDAGSource && !isBranch) {
-          filteredEdges = filteredEdges.filter(
-            (edge) =>
-              !(edge.source === params.source && edge.target !== params.target),
+          filtered = filtered.filter(
+            (e) => !(e.source === params.source && e.target !== params.target),
           );
         }
 
-        // Verificar si ya existe esta conexión
-        const exists = filteredEdges.some(
-          (edge) =>
-            edge.source === params.source && edge.target === params.target,
+        const exists = filtered.some(
+          (e) => e.source === params.source && e.target === params.target,
         );
 
-        if (exists) {
-          return filteredEdges;
-        }
+        if (exists) return filtered;
 
-        // Crear nueva conexión
         const newEdge = {
           ...params,
           id: `e${params.source}-${params.target}`,
@@ -927,35 +1222,29 @@ export default function DagCanvas() {
           },
         };
 
-        return addEdge(newEdge, filteredEdges);
+        return addEdge(newEdge, filtered);
       });
+
+      showNotification("Conexión creada", "success");
     },
-    [initialNodes, hasOutgoingEdge, hasIncomingEdge],
+    [initialNodes, initialEdges, showNotification],
   );
 
   const onEdgesChangeWithSelection = useCallback(
     (changes) => {
-      // Procesar cambios de edges
       changes.forEach((change) => {
         if (change.type === "select") {
-          if (change.selected) {
-            setSelectedEdgeId(change.id);
-          } else {
-            setSelectedEdgeId(null);
-          }
+          setSelectedEdgeId(change.selected ? change.id : null);
         } else if (change.type === "remove") {
-          // Sincronizar eliminación con initialEdges inmediatamente
-          setInitialEdges((eds) => {
-            const filtered = eds.filter((edge) => edge.id !== change.id);
-            return filtered;
-          });
+          setInitialEdges((prev) =>
+            prev.filter((edge) => edge.id !== change.id),
+          );
           if (selectedEdgeId === change.id) {
             setSelectedEdgeId(null);
           }
         }
       });
 
-      // Permitir que React Flow maneje los cambios internos DESPUÉS de actualizar initialEdges
       onEdgesChange(changes);
     },
     [onEdgesChange, selectedEdgeId],
@@ -966,7 +1255,6 @@ export default function DagCanvas() {
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
 
-      // Actualizar preview de zona de drop
       if (reactFlowInstance.current && nodes.length > 0) {
         const dropPosition = reactFlowInstance.current.screenToFlowPosition({
           x: e.clientX,
@@ -974,29 +1262,26 @@ export default function DagCanvas() {
         });
 
         const dropZoneInfo = findDropZone(dropPosition.y, dropPosition.x);
-        if (dropZoneInfo) {
-          setDropZonePreview({
-            nodeId: dropZoneInfo.node.id,
-            zone: dropZoneInfo.zone,
-          });
-        } else {
-          setDropZonePreview(null);
-        }
+        setDropZonePreview(
+          dropZoneInfo
+            ? {
+                nodeId: dropZoneInfo.node.id,
+                zone: dropZoneInfo.zone,
+              }
+            : null,
+        );
       }
     },
     [nodes, findDropZone],
   );
 
-  const onDragEnter = useCallback((e) => {
-    e.preventDefault();
+  const onDragEnter = useCallback(() => {
     setIsDragging(true);
   }, []);
 
   const onDragLeave = useCallback((e) => {
-    // Solo desactivar si salimos completamente del área de drop
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX;
-    const y = e.clientY;
+    const { clientX: x, clientY: y } = e;
 
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
       setIsDragging(false);
@@ -1020,19 +1305,18 @@ export default function DagCanvas() {
         const nodeHeight =
           node.data?.type === "BranchPythonOperator" ? 120 : 100;
         const nodeWidth = 280;
-        // Usar el centro del nodo como punto de referencia
         const nodeCenterY = node.position.y + nodeHeight / 2;
         const nodeCenterX = node.position.x + nodeWidth / 2;
 
         const dropZoneInfo = findDropZone(nodeCenterY, nodeCenterX, node.id);
-        if (dropZoneInfo) {
-          setDropZonePreview({
-            nodeId: dropZoneInfo.node.id,
-            zone: dropZoneInfo.zone,
-          });
-        } else {
-          setDropZonePreview(null);
-        }
+        setDropZonePreview(
+          dropZoneInfo
+            ? {
+                nodeId: dropZoneInfo.node.id,
+                zone: dropZoneInfo.zone,
+              }
+            : null,
+        );
       }
     },
     [findDropZone],
@@ -1048,227 +1332,56 @@ export default function DagCanvas() {
         return;
       }
 
-      // Si hay una zona de drop activa, reconectar el nodo
       if (dropZonePreview && dropZonePreview.nodeId !== node.id) {
         const targetNode = nodes.find((n) => n.id === dropZonePreview.nodeId);
+
         if (targetNode) {
-          setInitialEdges((eds) => {
-            // Encontrar las conexiones actuales del nodo que se está moviendo
-            const incomingToMovedNode = eds.find((e) => e.target === node.id);
-            const outgoingFromMovedNode = eds.find((e) => e.source === node.id);
+          setInitialEdges((prev) => {
+            let newEdges = cleanupMovedNodeConnections(node.id, prev);
 
-            // Paso 1: Reconectar los nodos que estaban conectados al nodo movido
-            // Si el nodo movido tenía un nodo anterior y uno posterior, conectarlos entre sí
-            let newEdges = eds.filter(
-              (e) => e.source !== node.id && e.target !== node.id,
-            );
-
-            if (incomingToMovedNode && outgoingFromMovedNode) {
-              // El nodo movido estaba en medio de una cadena, reconectar la cadena
-              const sourceOfMoved = incomingToMovedNode.source;
-              const targetOfMoved = outgoingFromMovedNode.target;
-              const sourceHandle = incomingToMovedNode.sourceHandle;
-
-              // Verificar que no estemos creando un ciclo o conexión redundante
-              if (sourceOfMoved !== targetOfMoved) {
-                // Verificar si ya existe esta conexión
-                const connectionExists = newEdges.some(
-                  (e) =>
-                    e.source === sourceOfMoved &&
-                    e.target === targetOfMoved &&
-                    e.sourceHandle === sourceHandle,
-                );
-                if (!connectionExists) {
-                  // Determinar el color basado en si el source es DAG o Branch
-                  const sourceNodeData = nodes.find(
-                    (n) => n.id === sourceOfMoved,
-                  );
-                  const isFromDAG = sourceNodeData?.data?.type === "DAG";
-                  const isFromBranch =
-                    sourceNodeData?.data?.type === "BranchPythonOperator";
-                  let strokeColor = "#64748b";
-                  if (isFromDAG) strokeColor = "#6366f1";
-                  else if (isFromBranch) {
-                    strokeColor =
-                      sourceHandle === "true"
-                        ? "#22c55e"
-                        : sourceHandle === "false"
-                          ? "#ef4444"
-                          : "#64748b";
-                  }
-
-                  newEdges.push({
-                    id: `e${sourceOfMoved}-${sourceHandle || ""}-${targetOfMoved}`,
-                    source: sourceOfMoved,
-                    sourceHandle: sourceHandle,
-                    target: targetOfMoved,
-                    type: "smoothstep",
-                    animated: true,
-                    style: { stroke: strokeColor, strokeWidth: 2 },
-                    markerEnd: {
-                      type: MarkerType.ArrowClosed,
-                      color: strokeColor,
-                    },
-                  });
-                }
-              }
-            }
-
-            // Paso 2: Insertar el nodo movido en la nueva posición
+            // Validar ciclos antes de reconectar
             if (dropZonePreview.zone === "above") {
-              // Insertar antes del nodo objetivo
-              const incomingToTarget = eds.find(
-                (e) => e.target === targetNode.id,
-              );
-
-              if (incomingToTarget) {
-                // Hay una conexión entrante al target, insertar en medio
-                // Remover la conexión entrante al target (si no fue ya removida)
-                newEdges = newEdges.filter((e) => e.id !== incomingToTarget.id);
-
-                // Determinar color basado en si viene de DAG o Branch
-                const sourceNodeData = nodes.find(
-                  (n) => n.id === incomingToTarget.source,
+              const incoming = prev.find((e) => e.target === targetNode.id);
+              if (
+                incoming &&
+                wouldCreateCycle(incoming.source, node.id, newEdges)
+              ) {
+                showNotification(
+                  "No se puede mover: crearía un ciclo",
+                  "error",
                 );
-                const isFromDAG = sourceNodeData?.data?.type === "DAG";
-                const isFromBranch =
-                  sourceNodeData?.data?.type === "BranchPythonOperator";
-                let strokeColor = "#64748b";
-                if (isFromDAG) strokeColor = "#6366f1";
-                else if (isFromBranch) {
-                  strokeColor =
-                    incomingToTarget.sourceHandle === "true"
-                      ? "#22c55e"
-                      : incomingToTarget.sourceHandle === "false"
-                        ? "#ef4444"
-                        : "#64748b";
-                }
-
-                // Conectar source original -> nodo movido
-                newEdges.push({
-                  id: `e${incomingToTarget.source}-${incomingToTarget.sourceHandle || ""}-${node.id}`,
-                  source: incomingToTarget.source,
-                  sourceHandle: incomingToTarget.sourceHandle,
-                  target: node.id,
-                  type: "smoothstep",
-                  animated: true,
-                  style: { stroke: strokeColor, strokeWidth: 2 },
-                  markerEnd: {
-                    type: MarkerType.ArrowClosed,
-                    color: strokeColor,
-                  },
-                });
+                return prev;
               }
-
-              // Conectar nodo movido -> target
-              newEdges.push({
-                id: `e${node.id}-${targetNode.id}`,
-                source: node.id,
-                target: targetNode.id,
-                type: "smoothstep",
-                animated: true,
-                style: { stroke: "#64748b", strokeWidth: 2 },
-                markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
-              });
+              newEdges = reconnectAbove(node.id, targetNode, newEdges, nodes);
+            } else if (dropZonePreview.zone === "below") {
+              if (wouldCreateCycle(targetNode.id, node.id, newEdges)) {
+                showNotification(
+                  "No se puede mover: crearía un ciclo",
+                  "error",
+                );
+                return prev;
+              }
+              newEdges = reconnectBelow(node.id, targetNode, newEdges, nodes);
             } else if (
               dropZonePreview.zone === "branch-true" ||
               dropZonePreview.zone === "branch-false"
             ) {
-              // Insertar en una rama de BranchPythonOperator
-              const handleId =
+              const branch =
                 dropZonePreview.zone === "branch-true" ? "true" : "false";
-              const strokeColor =
-                dropZonePreview.zone === "branch-true" ? "#22c55e" : "#ef4444";
-
-              // Buscar si ya hay una conexión desde este handle
-              const existingBranchEdge = eds.find(
-                (e) =>
-                  e.source === targetNode.id && e.sourceHandle === handleId,
-              );
-
-              if (existingBranchEdge) {
-                // Insertar en medio de la rama existente
-                newEdges = newEdges.filter(
-                  (e) => e.id !== existingBranchEdge.id,
+              if (wouldCreateCycle(targetNode.id, node.id, newEdges)) {
+                showNotification(
+                  "No se puede mover: crearía un ciclo",
+                  "error",
                 );
-
-                // Conectar nodo movido al destino original
-                newEdges.push({
-                  id: `e${node.id}-${existingBranchEdge.target}`,
-                  source: node.id,
-                  target: existingBranchEdge.target,
-                  type: "smoothstep",
-                  animated: true,
-                  style: { stroke: "#64748b", strokeWidth: 2 },
-                  markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
-                });
+                return prev;
               }
-
-              // Conectar branch -> nodo movido
-              newEdges.push({
-                id: `e${targetNode.id}-${handleId}-${node.id}`,
-                source: targetNode.id,
-                sourceHandle: handleId,
-                target: node.id,
-                type: "smoothstep",
-                animated: true,
-                style: { stroke: strokeColor, strokeWidth: 2 },
-                markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
-              });
-            } else if (dropZonePreview.zone === "below") {
-              // Insertar después del nodo objetivo (solo para nodos normales)
-              const isTargetBranch =
-                targetNode.data?.type === "BranchPythonOperator";
-
-              if (!isTargetBranch) {
-                const outgoingFromTarget = eds.find(
-                  (e) => e.source === targetNode.id,
-                );
-
-                if (outgoingFromTarget) {
-                  // Hay una conexión saliente del target, insertar en medio
-                  // Remover la conexión saliente del target (si no fue ya removida)
-                  newEdges = newEdges.filter(
-                    (e) => e.id !== outgoingFromTarget.id,
-                  );
-
-                  // Conectar nodo movido -> target original
-                  newEdges.push({
-                    id: `e${node.id}-${outgoingFromTarget.target}`,
-                    source: node.id,
-                    target: outgoingFromTarget.target,
-                    type: "smoothstep",
-                    animated: true,
-                    style: { stroke: "#64748b", strokeWidth: 2 },
-                    markerEnd: {
-                      type: MarkerType.ArrowClosed,
-                      color: "#64748b",
-                    },
-                  });
-                }
-
-                // Determinar color basado en si el target es DAG
-                const isTargetDAG = targetNode.data?.type === "DAG";
-                const strokeColor = isTargetDAG ? "#6366f1" : "#64748b";
-
-                // Conectar target -> nodo movido
-                newEdges.push({
-                  id: `e${targetNode.id}-${node.id}`,
-                  source: targetNode.id,
-                  target: node.id,
-                  type: "smoothstep",
-                  animated: true,
-                  style: { stroke: strokeColor, strokeWidth: 2 },
-                  markerEnd: {
-                    type: MarkerType.ArrowClosed,
-                    color: strokeColor,
-                  },
-                });
-              }
+              newEdges = reconnectBranch(node.id, targetNode, branch, newEdges);
             }
 
             return newEdges;
           });
+
+          showNotification("Nodo reubicado correctamente", "success");
         }
       }
 
@@ -1276,58 +1389,57 @@ export default function DagCanvas() {
       setDraggingNodeId(null);
       setDropZonePreview(null);
     },
-    [dropZonePreview, nodes],
+    [dropZonePreview, nodes, showNotification],
   );
 
   // Función para autoajustar el layout
-  const handleAutoLayout = useCallback(
-    (customNodes, customEdges) => {
-      if (!customNodes?.length) return;
+  const handleAutoLayout = useCallback(() => {
+    if (!nodes.length) return;
 
-      const { nodes: layoutedNodes, edges: layoutedEdges } =
-        getLayoutedElements(customNodes, customEdges, "TB");
+    const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(
+      nodes,
+      edges,
+      "TB",
+    );
 
-      setNodes(layoutedNodes);
-      setEdges(layoutedEdges);
-    },
-    [setNodes, setEdges],
-  );
+    setNodes(layouted);
+    setEdges(layoutedEdges);
+    showNotification("Layout ajustado", "success");
+  }, [nodes, edges, setNodes, setEdges, showNotification]);
 
-  const expandAllParameters = () => {
+  const expandAllParameters = useCallback(() => {
     setNodes((prev) => {
       const updated = prev.map((n) => ({
         ...n,
-        data: {
-          ...n.data,
-          showParameters: true,
-        },
+        data: { ...n.data, showParameters: true },
       }));
 
       requestAnimationFrame(() => {
-        handleAutoLayout(updated, edges);
+        const { nodes: layouted } = getLayoutedElements(updated, edges, "TB");
+        setNodes(layouted);
       });
 
       return updated;
     });
-  };
+    showNotification("Parámetros expandidos", "success");
+  }, [edges, setNodes, showNotification]);
 
-  const collapseAllParameters = () => {
+  const collapseAllParameters = useCallback(() => {
     setNodes((prev) => {
       const updated = prev.map((n) => ({
         ...n,
-        data: {
-          ...n.data,
-          showParameters: false,
-        },
+        data: { ...n.data, showParameters: false },
       }));
 
       requestAnimationFrame(() => {
-        handleAutoLayout(updated, edges);
+        const { nodes: layouted } = getLayoutedElements(updated, edges, "TB");
+        setNodes(layouted);
       });
 
       return updated;
     });
-  };
+    showNotification("Parámetros contraídos", "success");
+  }, [edges, setNodes, showNotification]);
 
   // Usar initialNodes.length para el contador en lugar de nodes.length
   // porque nodes puede estar desactualizado durante el cálculo del layout
@@ -1339,6 +1451,67 @@ export default function DagCanvas() {
       className="flex-1 flex flex-col relative bg-gray-50 overflow-hidden"
       style={{ height: "100%" }}
     >
+      {/* Notificaciones */}
+      {notification && (
+        <div
+          style={{
+            position: "fixed",
+            top: "20px",
+            right: "20px",
+            zIndex: 3000,
+            background:
+              notification.type === "error"
+                ? "#ef4444"
+                : notification.type === "warning"
+                  ? "#f59e0b"
+                  : notification.type === "success"
+                    ? "#22c55e"
+                    : "#3b82f6",
+            color: "#fff",
+            padding: "12px 20px",
+            borderRadius: "8px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            fontSize: "14px",
+            fontWeight: "500",
+          }}
+        >
+          {notification.message}
+        </div>
+      )}
+
+      {/* Errores de validación */}
+      {validationErrors && !validationErrors.isValid && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: "20px",
+            left: "20px",
+            zIndex: 3000,
+            background: "#fef3c7",
+            border: "2px solid #f59e0b",
+            color: "#92400e",
+            padding: "12px 16px",
+            borderRadius: "8px",
+            maxWidth: "400px",
+            fontSize: "12px",
+          }}
+        >
+          <div style={{ fontWeight: "bold", marginBottom: "4px" }}>
+            ⚠️ Advertencias de validación:
+          </div>
+          {validationErrors.hasCycles && (
+            <div>• Se detectaron ciclos en el DAG</div>
+          )}
+          {validationErrors.hasOrphanNodes && (
+            <div>
+              • {validationErrors.orphanNodes.length} nodo(s) sin conexiones
+            </div>
+          )}
+          {validationErrors.hasMultipleDAGs && (
+            <div>• Múltiples nodos DAG detectados</div>
+          )}
+        </div>
+      )}
       {/* Header informativo */}
       <div className="flex-shrink-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between">
         <div>
@@ -1367,13 +1540,10 @@ export default function DagCanvas() {
               </button>
 
               <button
-                onClick={() => handleAutoLayout(nodes, edges)}
-                className="text-xs bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-3 py-1.5 rounded-md border border-indigo-300 transition-colors flex items-center gap-1.5"
+                onClick={handleAutoLayout}
+                className="text-xs bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-3 py-1.5 rounded-md border border-indigo-300 transition-colors"
                 title="Ajustar layout automáticamente"
               >
-                <span className="material-symbols-outlined text-sm">
-                  account_tree
-                </span>
                 Ajustar Layout
               </button>
               <div className="text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md border border-gray-200">
@@ -1472,6 +1642,7 @@ export default function DagCanvas() {
         )}
 
         {/* Overlay de notificación superior - Indicador de zona de drop */}
+        {/* Drop Zone Preview */}
         {(isDragging || isNodeDragging) &&
           dropZonePreview &&
           (() => {
@@ -1483,68 +1654,28 @@ export default function DagCanvas() {
             )
               return null;
 
-            const isActiveAbove = dropZonePreview.zone === "above";
-            const isActiveBelow = dropZonePreview.zone === "below";
-            const isActiveBranchTrue = dropZonePreview.zone === "branch-true";
-            const isActiveBranchFalse = dropZonePreview.zone === "branch-false";
-
-            // Obtener el nombre del nodo objetivo
             const targetTaskId =
               node.data?.task_id || node.data?.label || "task";
+            const zone = dropZonePreview.zone;
 
-            // Generar el texto del comando según la zona
-            const getCommandText = () => {
-              if (isActiveAbove) return `new_task >> ${targetTaskId}`;
-              if (isActiveBelow) return `${targetTaskId} >> new_task`;
-              if (isActiveBranchTrue)
-                return `${targetTaskId}.set_downstream(new_task, branch='true')`;
-              if (isActiveBranchFalse)
-                return `${targetTaskId}.set_downstream(new_task, branch='false')`;
-              return "";
-            };
-
-            // Determinar color principal
-            const getColor = () => {
-              if (isActiveAbove) return { bg: "#6366f1", light: "#818cf8" };
-              if (isActiveBelow) return { bg: "#22c55e", light: "#4ade80" };
-              if (isActiveBranchTrue)
-                return { bg: "#22c55e", light: "#4ade80" };
-              if (isActiveBranchFalse)
-                return { bg: "#ef4444", light: "#f87171" };
-              return { bg: "#64748b", light: "#94a3b8" };
-            };
-
-            // Determinar etiqueta y descripción
-            const getInfo = () => {
-              if (isActiveAbove)
-                return {
-                  label: "INSERTAR ANTES",
-                  desc: "El nuevo elemento se conectará ANTES de este nodo",
-                  arrow: "north", // Flecha apuntando hacia arriba
-                };
-              if (isActiveBelow)
-                return {
-                  label: "INSERTAR DESPUÉS",
-                  desc: "El nuevo elemento se conectará DESPUÉS de este nodo",
-                  arrow: "south", // Flecha apuntando hacia abajo
-                };
-              if (isActiveBranchTrue)
-                return {
-                  label: "RAMA VERDADERA",
-                  desc: "Conectar a la rama TRUE (condición verdadera)",
-                  arrow: "south_west", // Flecha hacia abajo-izquierda
-                };
-              if (isActiveBranchFalse)
-                return {
-                  label: "RAMA FALSA",
-                  desc: "Conectar a la rama FALSE (condición falsa)",
-                  arrow: "south_east", // Flecha hacia abajo-derecha
-                };
-              return { label: "", desc: "", arrow: "link" };
-            };
-
-            const color = getColor();
-            const info = getInfo();
+            const info = {
+              above: { label: "INSERTAR ANTES", color: "#6366f1", icon: "⬆️" },
+              below: {
+                label: "INSERTAR DESPUÉS",
+                color: "#22c55e",
+                icon: "⬇️",
+              },
+              "branch-true": {
+                label: "RAMA TRUE",
+                color: "#22c55e",
+                icon: "↙️",
+              },
+              "branch-false": {
+                label: "RAMA FALSE",
+                color: "#ef4444",
+                icon: "↘️",
+              },
+            }[zone];
 
             return (
               <div
@@ -1559,155 +1690,23 @@ export default function DagCanvas() {
               >
                 <div
                   style={{
-                    background: `linear-gradient(135deg, ${color.bg} 0%, ${color.light} 100%)`,
-                    borderRadius: "12px",
+                    background: info.color,
+                    color: "#fff",
                     padding: "12px 20px",
-                    boxShadow: `0 8px 32px ${color.bg}66, 0 4px 12px rgba(0,0,0,0.15)`,
+                    borderRadius: "8px",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                    fontSize: "13px",
+                    fontWeight: "600",
                     display: "flex",
                     alignItems: "center",
-                    gap: "16px",
-                    minWidth: "320px",
-                    maxWidth: "500px",
+                    gap: "8px",
                   }}
                 >
-                  {/* Icono de flecha direccional grande */}
-                  <div
-                    style={{
-                      width: "48px",
-                      height: "48px",
-                      borderRadius: "10px",
-                      background: "rgba(255,255,255,0.2)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{
-                        fontSize: "28px",
-                        color: "#ffffff",
-                      }}
-                    >
-                      {info.arrow}
-                    </span>
-                  </div>
-
-                  {/* Contenido de texto */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {/* Etiqueta principal */}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: "13px",
-                          fontWeight: 700,
-                          color: "#ffffff",
-                          textTransform: "uppercase",
-                          letterSpacing: "0.5px",
-                        }}
-                      >
-                        {info.label}
-                      </span>
-                      {(isActiveBranchTrue || isActiveBranchFalse) && (
-                        <span
-                          style={{
-                            fontSize: "10px",
-                            fontWeight: 600,
-                            color: "rgba(255,255,255,0.8)",
-                            background: "rgba(255,255,255,0.2)",
-                            padding: "2px 6px",
-                            borderRadius: "4px",
-                          }}
-                        >
-                          {isActiveBranchTrue ? "TRUE" : "FALSE"}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Descripción */}
-                    <div
-                      style={{
-                        fontSize: "11px",
-                        color: "rgba(255,255,255,0.85)",
-                        marginBottom: "6px",
-                      }}
-                    >
-                      {info.desc}
-                    </div>
-
-                    {/* Código del comando */}
-                    <div
-                      style={{
-                        background: "rgba(0,0,0,0.25)",
-                        borderRadius: "6px",
-                        padding: "6px 10px",
-                        fontFamily:
-                          'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
-                        fontSize: "11px",
-                        color: "#ffffff",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                      }}
-                    >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{
-                          fontSize: "12px",
-                          color: "rgba(255,255,255,0.7)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        code
-                      </span>
-                      {getCommandText()}
-                    </div>
-                  </div>
-
-                  {/* Indicador del nodo objetivo */}
-                  <div
-                    style={{
-                      background: "rgba(255,255,255,0.15)",
-                      borderRadius: "8px",
-                      padding: "8px 12px",
-                      flexShrink: 0,
-                      textAlign: "center",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "9px",
-                        color: "rgba(255,255,255,0.7)",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.5px",
-                        marginBottom: "2px",
-                      }}
-                    >
-                      Destino
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "12px",
-                        fontWeight: 600,
-                        color: "#ffffff",
-                        maxWidth: "100px",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {targetTaskId}
+                  <span style={{ fontSize: "18px" }}>{info.icon}</span>
+                  <div>
+                    <div>{info.label}</div>
+                    <div style={{ fontSize: "11px", opacity: 0.9 }}>
+                      → {targetTaskId}
                     </div>
                   </div>
                 </div>
