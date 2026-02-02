@@ -1,27 +1,18 @@
-from flask import Flask, send_from_directory
-import os
+from flask import Flask
+from flask_cors import CORS
+from routes.auth import auth_bp
+from routes.tasks import tasks_bp
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(BASE_DIR, "dist")
+app = Flask(__name__)
+CORS(app)
 
-app = Flask(__name__, static_folder=DIST_DIR, static_url_path="")
+# Registrar blueprints
+app.register_blueprint(auth_bp, url_prefix='/api/auth')
+app.register_blueprint(tasks_bp, url_prefix='/api')
 
-@app.route("/")
-def serve_react():
-    return send_from_directory(DIST_DIR, "index.html")
+@app.route('/health', methods=['GET'])
+def health_check():
+    return {'status': 'ok'}, 200
 
-@app.route("/<path:path>")
-def serve_static(path):
-    file_path = os.path.join(DIST_DIR, path)
-    if os.path.exists(file_path):
-        return send_from_directory(DIST_DIR, path)
-    else:
-        return send_from_directory(DIST_DIR, "index.html")
-
-# ejemplo API
-@app.route("/api/status")
-def status():
-    return {"status": "ok", "server": "flask"}
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
