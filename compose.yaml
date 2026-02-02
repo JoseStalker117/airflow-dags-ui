@@ -1,15 +1,4 @@
 services:
-  mongodb:
-    image: mongo:7
-    container_name: mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    environment:
-      MONGO_INITDB_DATABASE: appdb
-
   backend:
     build:
       context: ./backend
@@ -19,12 +8,6 @@ services:
       - "5000:5000"
     volumes:
       - ./backend:/app
-    environment:
-      # Mongo connection
-      MONGO_URI: mongodb://mongodb:27017/appdb
-      MONGO_DB_NAME: appdb
-    depends_on:
-      - mongodb
 
   frontend:
     build:
@@ -34,15 +17,8 @@ services:
     ports:
       - "5001:5001"
     volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/index.html:/app/index.html
-      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend:/app
       - /app/node_modules
     environment:
       ROLLUP_SKIP_NATIVE: "true"
-      VITE_API_URL: http://localhost:5000
-    depends_on:
-      - backend
-
-volumes:
-  mongo_data:
+      VITE_API_URL: http://backend:5000
