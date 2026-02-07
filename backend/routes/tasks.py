@@ -5,29 +5,31 @@ from datetime import datetime
 
 tasks_bp = Blueprint('tasks', __name__)
 
-# GET todas las tasks (público desde frontend, pero autenticado desde backend)
+# GET todas las tasks desde Firestore (público, sin autenticación)
 @tasks_bp.route('/tasks', methods=['GET'])
-@require_auth
 def get_tasks():
-    """Obtiene todas las tasks activas"""
+    """Obtiene todas las tasks activas. Query: ?framework=airflow|argo (opcional)."""
     try:
+        framework = request.args.get('framework')
         tasks_ref = db.collection('task')
-        tasks = tasks_ref.where('isActive', '==', True).stream()
-        
+        query = tasks_ref.where('isActive', '==', True)
+        if framework in ('airflow', 'argo'):
+            query = query.where('framework', '==', framework)
+        tasks = query.stream()
+
         tasks_list = []
         for task in tasks:
             task_data = task.to_dict()
             task_data['id'] = task.id
             tasks_list.append(task_data)
-        
+
         return jsonify(tasks_list), 200
-    
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# GET una task específica
+# GET una task específica (público)
 @tasks_bp.route('/tasks/<task_id>', methods=['GET'])
-@require_auth
 def get_task(task_id):
     """Obtiene una task por ID"""
     try:
@@ -53,11 +55,13 @@ def create_task():
     try:
         data = request.json
         
-        # Validaciones básicas
-        required_fields = ['name', 'category', 'platform', 'template']
+        # Validaciones básicas (framework obligatorio: airflow | argo)
+        required_fields = ['name', 'category', 'platform', 'template', 'framework']
         for field in required_fields:
             if field not in data:
                 return jsonify({'error': f'Campo requerido: {field}'}), 400
+        if data.get('framework') not in ('airflow', 'argo'):
+            return jsonify({'error': 'framework debe ser "airflow" o "argo"'}), 400
         
         # Agregar metadata
         task_data = {

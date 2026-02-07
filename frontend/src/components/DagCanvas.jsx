@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -11,8 +11,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import dagre from "dagre";
 import DagFlowNode from "./DagFlowNode";
-import { saveCanvasState, loadCanvasState } from "../utils/storage";
-import { defaultDAG } from "../data/tasks/defaultDAG";
+import { saveCanvasState, loadCanvasState, getCanvasPayloadForBackend } from "../utils/storage";
 
 // ============================================================================
 // UTILIDADES DE VALIDACIÓN Y DETECCIÓN DE CICLOS
@@ -50,7 +49,9 @@ const wouldCreateCycle = (sourceId, targetId, edges) => {
  * Valida la integridad del DAG
  */
 const validateDAG = (nodes, edges) => {
-  const dagNodes = nodes.filter((n) => n.data?.type === "DAG");
+  const dagNodes = nodes.filter(
+    (n) => n.data?.type === "DAG" || n.data?.type === "ArgoWorkflow"
+  );
 
   // Detectar ciclos
   const cycles = [];
@@ -68,12 +69,14 @@ const validateDAG = (nodes, edges) => {
     connectedNodes.add(e.target);
   });
 
+  const isDAGLike = (n) =>
+    n.data?.type === "DAG" || n.data?.type === "ArgoWorkflow";
   const orphanNodes = nodes.filter(
-    (n) => !connectedNodes.has(n.id) && n.data?.type !== "DAG",
+    (n) => !connectedNodes.has(n.id) && !isDAGLike(n),
   );
 
   return {
-    isValid: cycles.length === 0 && dagNodes.length === 1,
+    isValid: cycles.length === 0,
     hasCycles: cycles.length > 0,
     cycleEdges: cycles,
     hasOrphanNodes: orphanNodes.length > 0,
@@ -100,7 +103,9 @@ const reconnectAbove = (movedNodeId, targetNode, edges, nodes) => {
     newEdges = newEdges.filter((e) => e.id !== incomingToTarget.id);
 
     const sourceNodeData = nodes.find((n) => n.id === incomingToTarget.source);
-    const isFromDAG = sourceNodeData?.data?.type === "DAG";
+    const isFromDAG =
+      sourceNodeData?.data?.type === "DAG" ||
+      sourceNodeData?.data?.type === "ArgoWorkflow";
     const isFromBranch = sourceNodeData?.data?.type === "BranchPythonOperator";
 
     let strokeColor = "#64748b";
@@ -166,7 +171,9 @@ const reconnectBelow = (movedNodeId, targetNode, edges, nodes) => {
     });
   }
 
-  const isTargetDAG = targetNode.data?.type === "DAG";
+  const isTargetDAG =
+    targetNode.data?.type === "DAG" ||
+    targetNode.data?.type === "ArgoWorkflow";
   const strokeColor = isTargetDAG ? "#6366f1" : "#64748b";
 
   newEdges.push({
@@ -270,15 +277,21 @@ const getLayoutedElements = (nodes, edges, direction = "TB") => {
     return { nodes: [], edges };
   }
 
-  // Separar nodos DAG de tareas
-  const dagNodes = nodes.filter((n) => n.data && n.data.type === "DAG");
-  const taskNodes = nodes.filter((n) => !n.data || n.data.type !== "DAG");
+  // Separar nodos DAG/Argo de tareas
+  const dagNodes = nodes.filter(
+    (n) => n.data && (n.data.type === "DAG" || n.data.type === "ArgoWorkflow")
+  );
+  const taskNodes = nodes.filter(
+    (n) =>
+      !n.data ||
+      (n.data.type !== "DAG" && n.data.type !== "ArgoWorkflow")
+  );
 
   // ---------------------------
-  // CASO CON DAG
+  // CASO CON AL MENOS UN DAG Y TAREAS
   // ---------------------------
   if (dagNodes.length > 0 && taskNodes.length > 0) {
-    const dagNode = dagNodes[0];
+    const dagNode = dagNodes[0]; // layout usa el primer DAG como raíz
     const dagId = dagNode.id;
 
     const dagreGraph = new dagre.graphlib.Graph();
@@ -406,7 +419,8 @@ const getLayoutedElements = (nodes, edges, direction = "TB") => {
   nodes.forEach((node) => {
     const data = node.data || {};
 
-    const isDAG = data.type === "DAG";
+    const isDAG =
+      data.type === "DAG" || data.type === "ArgoWorkflow";
     const isBranch = data.type === "BranchPythonOperator";
 
     dagreGraph.setNode(node.id, {
@@ -419,7 +433,11 @@ const getLayoutedElements = (nodes, edges, direction = "TB") => {
     dagreGraph.setEdge(edge.source, edge.target);
   });
 
-  const dagNode = nodes.find((n) => n.data && n.data.type === "DAG");
+  const dagNode = nodes.find(
+    (n) =>
+      n.data &&
+      (n.data.type === "DAG" || n.data.type === "ArgoWorkflow")
+  );
 
   const connected = new Set();
   edges.forEach((e) => {
@@ -432,7 +450,8 @@ const getLayoutedElements = (nodes, edges, direction = "TB") => {
       if (
         node.id !== dagNode.id &&
         !connected.has(node.id) &&
-        (!node.data || node.data.type !== "DAG")
+        node.data?.type !== "DAG" &&
+        node.data?.type !== "ArgoWorkflow"
       ) {
         dagreGraph.setEdge(dagNode.id, node.id);
       }
@@ -484,65 +503,18 @@ const defaultEdgeOptions = {
 const defaultViewport = { x: 0, y: 0, zoom: 1 };
 const reactFlowStyle = { width: "100%", height: "100%" };
 
-// ID fijo para el nodo DAG por defecto
-const DEFAULT_DAG_NODE_ID = "dag_definition";
-
-// Función helper para crear el nodo DAG desde defaultDAG
-const createDefaultDAGNode = (handleNodeDelete) => {
-  const dagData = defaultDAG[0];
-  const dagNodeId = DEFAULT_DAG_NODE_ID;
-
-  return {
-    id: dagNodeId,
-    type: "dagNode",
-    data: {
-      ...dagData,
-      id: dagNodeId,
-      task_id: dagData.label || "DAG Definition",
-      parameterDefinitions: dagData.parameters || {},
-      parameters: dagData.parameters
-        ? Object.entries(dagData.parameters).reduce((acc, [key, param]) => {
-            if (param.default !== undefined) {
-              acc[key] = param.default;
-            }
-            return acc;
-          }, {})
-        : {},
-      onUpdate: (updatedData) => {
-        // Esta función será actualizada cuando se setee el nodo
-      },
-      onDelete: handleNodeDelete,
-    },
-    position: { x: 0, y: 0 },
-    draggable: true, // Permitir arrastrar el nodo DAG
-    selectable: true,
-    deletable: false, // Marcarlo como no eliminable
-  };
+// Ordenar nodos: tipos DAG/ArgoWorkflow primero (para layout), luego el resto
+const sortNodesWithDAGFirst = (nodes) => {
+  const dagNodes = nodes.filter(
+    (n) => n.data?.type === "DAG" || n.data?.type === "ArgoWorkflow"
+  );
+  const taskNodes = nodes.filter(
+    (n) => !n.data || (n.data.type !== "DAG" && n.data.type !== "ArgoWorkflow")
+  );
+  return [...dagNodes, ...taskNodes];
 };
 
-// Función helper para asegurar que el DAG esté al inicio del array de nodos
-const ensureDAGAtStart = (nodes, handleNodeDelete, setNodesCallback = null) => {
-  const dagNodes = nodes.filter((n) => n.data?.type === "DAG");
-  const taskNodes = nodes.filter((n) => !n.data || n.data.type !== "DAG");
-
-  // Si no hay nodo DAG, crear uno
-  let dagNode = dagNodes[0];
-  if (!dagNode) {
-    dagNode = createDefaultDAGNode(handleNodeDelete);
-  } else {
-    // Asegurar que el nodo DAG tenga las propiedades correctas
-    dagNode = {
-      ...dagNode,
-      draggable: true, // Permitir arrastrar
-      deletable: false,
-    };
-  }
-
-  // Retornar array con DAG al inicio
-  return [dagNode, ...taskNodes];
-};
-
-export default function DagCanvas() {
+const DagCanvas = forwardRef(function DagCanvas(_, ref) {
   const [initialNodes, setInitialNodes] = useState([]);
   const [initialEdges, setInitialEdges] = useState([]);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
@@ -565,24 +537,41 @@ export default function DagCanvas() {
 
   const handleNodeDelete = useCallback(
     (nodeId) => {
-      if (nodeId === DEFAULT_DAG_NODE_ID) {
-        showNotification("No se puede eliminar el nodo DAG principal", "error");
-        return;
-      }
-
-      setInitialNodes((prev) => {
-        const filtered = prev.filter((node) => node.id !== nodeId);
-        return ensureDAGAtStart(filtered, handleNodeDelete);
-      });
-
+      setInitialNodes((prev) =>
+        sortNodesWithDAGFirst(prev.filter((node) => node.id !== nodeId))
+      );
       setInitialEdges((prev) =>
         prev.filter((edge) => edge.source !== nodeId && edge.target !== nodeId),
       );
-
       showNotification("Nodo eliminado correctamente", "success");
     },
-    [ensureDAGAtStart, showNotification],
+    [showNotification],
   );
+
+  // Exponer estado actual y payload para el padre (TopBar, backend) — después de handleNodeDelete
+  useImperativeHandle(ref, () => ({
+    getNodes: () => initialNodes,
+    getEdges: () => initialEdges,
+    getPayloadForBackend: () => getCanvasPayloadForBackend(initialNodes, initialEdges),
+    setCanvasData: (nodes, edges) => {
+      const withCallbacks = (nodes || []).map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          onUpdate: (updatedData) => {
+            setInitialNodes((prev) =>
+              prev.map((n) =>
+                n.id === node.id ? { ...n, data: { ...n.data, ...updatedData } } : n
+              )
+            );
+          },
+          onDelete: handleNodeDelete,
+        },
+      }));
+      setInitialNodes(sortNodesWithDAGFirst(withCallbacks));
+      setInitialEdges(edges || []);
+    },
+  }), [initialNodes, initialEdges, handleNodeDelete]);
 
   useEffect(() => {
     if (isInitializedRef.current) return;
@@ -606,65 +595,22 @@ export default function DagCanvas() {
           onDelete: handleNodeDelete,
         },
       }));
-
-      const nodesWithDAG = ensureDAGAtStart(restoredNodes, handleNodeDelete);
-      setInitialNodes(nodesWithDAG);
+      setInitialNodes(sortNodesWithDAGFirst(restoredNodes));
       setInitialEdges(savedState.edges || []);
       showNotification("Estado cargado correctamente", "success");
     } else {
-      const dagData = defaultDAG[0];
-      const defaultDAGNode = {
-        id: DEFAULT_DAG_NODE_ID,
-        type: "dagNode",
-        data: {
-          ...dagData,
-          id: DEFAULT_DAG_NODE_ID,
-          task_id: dagData.label || "DAG Definition",
-          parameterDefinitions: dagData.parameters || {},
-          parameters: dagData.parameters
-            ? Object.entries(dagData.parameters).reduce((acc, [key, param]) => {
-                if (param.default !== undefined) {
-                  acc[key] = param.default;
-                }
-                return acc;
-              }, {})
-            : {},
-          onUpdate: (updatedData) => {
-            setInitialNodes((prev) =>
-              prev.map((n) =>
-                n.id === DEFAULT_DAG_NODE_ID
-                  ? { ...n, data: { ...n.data, ...updatedData } }
-                  : n,
-              ),
-            );
-          },
-          onDelete: handleNodeDelete,
-        },
-        position: { x: 0, y: 0 },
-        draggable: true,
-        selectable: true,
-        deletable: false,
-      };
-
-      setInitialNodes([defaultDAGNode]);
+      setInitialNodes([]);
+      setInitialEdges([]);
     }
 
     isInitializedRef.current = true;
-  }, [handleNodeDelete, ensureDAGAtStart, showNotification]);
+  }, [handleNodeDelete, showNotification]);
 
   const onNodesChangeWithDAGProtection = useCallback(
     (changes) => {
-      const filtered = changes.filter((change) => {
-        if (change.type === "remove" && change.id === DEFAULT_DAG_NODE_ID) {
-          showNotification("No se puede eliminar el nodo DAG", "error");
-          return false;
-        }
-        return true;
-      });
-
-      onNodesChange(filtered);
+      onNodesChange(changes);
     },
-    [onNodesChange, showNotification],
+    [onNodesChange],
   );
 
   // Función para actualizar layout cuando cambian los nodos o edges
@@ -676,18 +622,9 @@ export default function DagCanvas() {
       return;
     }
 
-    const nodesWithDAG = ensureDAGAtStart(initialNodes, handleNodeDelete);
-    const needsUpdate =
-      nodesWithDAG[0]?.id !== initialNodes[0]?.id ||
-      nodesWithDAG.length !== initialNodes.length;
-
-    if (needsUpdate) {
-      setInitialNodes(nodesWithDAG);
-      return;
-    }
-
+    const sortedNodes = sortNodesWithDAGFirst(initialNodes);
     const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-      nodesWithDAG,
+      sortedNodes,
       initialEdges,
       "TB",
     );
@@ -713,8 +650,6 @@ export default function DagCanvas() {
     initialEdges,
     setNodes,
     setEdges,
-    handleNodeDelete,
-    ensureDAGAtStart,
     showNotification,
   ]);
 
@@ -794,7 +729,11 @@ export default function DagCanvas() {
       let dropZone = "below";
 
       nodes.forEach((node) => {
-        if (node.data?.type === "DAG") return;
+        if (
+          node.data?.type === "DAG" ||
+          node.data?.type === "ArgoWorkflow"
+        )
+          return;
         if (excludeNodeId && node.id === excludeNodeId) return;
 
         const nodeHeight =
@@ -902,7 +841,8 @@ export default function DagCanvas() {
       const dropZoneInfo = findDropZone(dropPosition.y, dropPosition.x);
       let newEdges = initialEdges;
       const isBranchOperator = data.type === "BranchPythonOperator";
-      const isDAG = data.type === "DAG";
+      const isDAG =
+        data.type === "DAG" || data.type === "ArgoWorkflow";
 
       if (dropZoneInfo && !isDAG) {
         const { node: targetNode, zone } = dropZoneInfo;
@@ -1080,7 +1020,10 @@ export default function DagCanvas() {
               ]);
           } else {
             // Si targetNode no tiene entrada, conectar desde DAG o último nodo
-            const dagNode = initialNodes.find((n) => n.data?.type === "DAG");
+            const dagNode = initialNodes.find(
+              (n) =>
+                n.data?.type === "DAG" || n.data?.type === "ArgoWorkflow"
+            );
             if (dagNode) {
               newEdges = [
                 ...initialEdges,
@@ -1108,7 +1051,10 @@ export default function DagCanvas() {
         }
       } else if (initialNodes.length > 0 && !isDAG) {
         // Fallback a conexión automática estándar (también aplica para BranchPythonOperator)
-        const dagNode = initialNodes.find((node) => node.data?.type === "DAG");
+        const dagNode = initialNodes.find(
+          (node) =>
+            node.data?.type === "DAG" || node.data?.type === "ArgoWorkflow"
+        );
 
         if (dagNode) {
           newEdges = [
@@ -1153,10 +1099,9 @@ export default function DagCanvas() {
         }
       }
 
-      setInitialNodes((prev) => {
-        const updated = [...prev, newNode];
-        return ensureDAGAtStart(updated, handleNodeDelete);
-      });
+      setInitialNodes((prev) =>
+        sortNodesWithDAGFirst([...prev, newNode])
+      );
       setInitialEdges(newEdges);
       showNotification("Nodo agregado correctamente", "success");
     },
@@ -1165,7 +1110,6 @@ export default function DagCanvas() {
       initialEdges,
       handleNodeDelete,
       findDropZone,
-      ensureDAGAtStart,
       showNotification,
     ],
   );
@@ -1180,14 +1124,21 @@ export default function DagCanvas() {
 
       const sourceNode = initialNodes.find((n) => n.id === params.source);
       const targetNode = initialNodes.find((n) => n.id === params.target);
-      const isDAGTarget = targetNode?.data?.type === "DAG";
+      const isDAGTarget =
+        targetNode?.data?.type === "DAG" ||
+        targetNode?.data?.type === "ArgoWorkflow";
 
       if (isDAGTarget) {
-        showNotification("No se puede conectar a un nodo DAG", "error");
+        showNotification(
+          "No se puede conectar a un nodo DAG/Workflow",
+          "error"
+        );
         return;
       }
 
-      const isDAGSource = sourceNode?.data?.type === "DAG";
+      const isDAGSource =
+        sourceNode?.data?.type === "DAG" ||
+        sourceNode?.data?.type === "ArgoWorkflow";
       const isBranch = sourceNode?.data?.type === "BranchPythonOperator";
 
       setInitialEdges((prev) => {
@@ -1291,7 +1242,11 @@ export default function DagCanvas() {
 
   // Manejar inicio de arrastre de nodo interno
   const onNodeDragStart = useCallback((event, node) => {
-    if (node.data?.type === "DAG") return; // No aplicar a DAG
+    if (
+      node.data?.type === "DAG" ||
+      node.data?.type === "ArgoWorkflow"
+    )
+      return;
     setIsNodeDragging(true);
     setDraggingNodeId(node.id);
   }, []);
@@ -1299,7 +1254,11 @@ export default function DagCanvas() {
   // Manejar arrastre de nodo interno
   const onNodeDrag = useCallback(
     (event, node) => {
-      if (node.data?.type === "DAG") return;
+      if (
+        node.data?.type === "DAG" ||
+        node.data?.type === "ArgoWorkflow"
+      )
+        return;
 
       if (reactFlowInstance.current) {
         const nodeHeight =
@@ -1325,7 +1284,10 @@ export default function DagCanvas() {
   // Manejar fin de arrastre de nodo interno
   const onNodeDragStop = useCallback(
     (event, node) => {
-      if (node.data?.type === "DAG") {
+      if (
+        node.data?.type === "DAG" ||
+        node.data?.type === "ArgoWorkflow"
+      ) {
         setIsNodeDragging(false);
         setDraggingNodeId(null);
         setDropZonePreview(null);
@@ -1408,38 +1370,24 @@ export default function DagCanvas() {
   }, [nodes, edges, setNodes, setEdges, showNotification]);
 
   const expandAllParameters = useCallback(() => {
-    setNodes((prev) => {
-      const updated = prev.map((n) => ({
+    setInitialNodes((prev) =>
+      prev.map((n) => ({
         ...n,
         data: { ...n.data, showParameters: true },
-      }));
-
-      requestAnimationFrame(() => {
-        const { nodes: layouted } = getLayoutedElements(updated, edges, "TB");
-        setNodes(layouted);
-      });
-
-      return updated;
-    });
+      }))
+    );
     showNotification("Parámetros expandidos", "success");
-  }, [edges, setNodes, showNotification]);
+  }, [showNotification]);
 
   const collapseAllParameters = useCallback(() => {
-    setNodes((prev) => {
-      const updated = prev.map((n) => ({
+    setInitialNodes((prev) =>
+      prev.map((n) => ({
         ...n,
         data: { ...n.data, showParameters: false },
-      }));
-
-      requestAnimationFrame(() => {
-        const { nodes: layouted } = getLayoutedElements(updated, edges, "TB");
-        setNodes(layouted);
-      });
-
-      return updated;
-    });
+      }))
+    );
     showNotification("Parámetros contraídos", "success");
-  }, [edges, setNodes, showNotification]);
+  }, [showNotification]);
 
   // Usar initialNodes.length para el contador en lugar de nodes.length
   // porque nodes puede estar desactualizado durante el cálculo del layout
@@ -1512,8 +1460,8 @@ export default function DagCanvas() {
           )}
         </div>
       )}
-      {/* Header informativo */}
-      <div className="flex-shrink-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+      {/* Header informativo (z-20 para quedar siempre encima del canvas y no bloquear clics) */}
+      <div className="flex-shrink-0 relative z-20 bg-white/80 backdrop-blur-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-slate-700">DAG Builder</h3>
           <p className="text-xs text-slate-500">
@@ -1609,9 +1557,10 @@ export default function DagCanvas() {
               position="top-right"
             />
             <MiniMap
-              nodeColor={(node) => {
+                nodeColor={(node) => {
                 const typeColorMap = {
                   DAG: "#6366f1",
+                  ArgoWorkflow: "#8b5cf6",
                   BashOperator: "#6ee7b7",
                   PythonOperator: "#93c5fd",
                   PythonVirtualenvOperator: "#a5b4fc",
@@ -1650,6 +1599,7 @@ export default function DagCanvas() {
             if (
               !node ||
               node.data?.type === "DAG" ||
+              node.data?.type === "ArgoWorkflow" ||
               node.id === draggingNodeId
             )
               return null;
@@ -1716,4 +1666,6 @@ export default function DagCanvas() {
       </div>
     </div>
   );
-}
+});
+
+export default DagCanvas;

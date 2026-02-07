@@ -1,10 +1,8 @@
-import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'framer-motion';
 
 const ProtectedRoute = ({ children }) => {
-  const { currentUser, loading, initialized } = useAuth();
-  const location = useLocation();
+  const { loading, initialized } = useAuth();
 
   // Mientras se verifica la autenticación
   if (!initialized || loading) {
@@ -40,13 +38,7 @@ const ProtectedRoute = ({ children }) => {
     );
   }
 
-  // Si no está autenticado, redirigir a login
-  if (!currentUser) {
-    // Guardar la ruta a la que intentaba acceder
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  // Si está autenticado, mostrar el contenido
+  // Permitir acceso sin autenticación (las tasks son públicas)
   return children;
 };
 

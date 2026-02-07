@@ -22,64 +22,49 @@ export default function Home() {
 
   // ============== HELPERS ==============
   
-  // Obtener datos del canvas
+  // Obtener datos del canvas (incluye parameters/parameterDefinitions para backend y persistencia)
   const getCanvasData = useCallback(() => {
     if (!canvasRef.current) {
       return { nodes: [], edges: [] };
     }
-    
-    // Intenta obtener los datos usando los métodos de ReactFlow
     try {
-      // Método 1: Si DagCanvas expone getNodes/getEdges
+      // Preferir payload serializable con contenido de paneles (parameters, parameterDefinitions)
+      if (typeof canvasRef.current.getPayloadForBackend === "function") {
+        return canvasRef.current.getPayloadForBackend();
+      }
       if (canvasRef.current.getNodes && canvasRef.current.getEdges) {
         return {
           nodes: canvasRef.current.getNodes(),
           edges: canvasRef.current.getEdges()
         };
       }
-      
-      // Método 2: Si DagCanvas usa useReactFlow internamente
-      if (canvasRef.current.reactFlowInstance) {
-        const instance = canvasRef.current.reactFlowInstance;
-        return {
-          nodes: instance.getNodes(),
-          edges: instance.getEdges()
-        };
-      }
-      
-      // Método 3: Desde localStorage (fallback)
       const savedState = loadCanvasState();
       return {
         nodes: savedState?.nodes || [],
         edges: savedState?.edges || []
       };
     } catch (error) {
-      console.warn('No se pudieron obtener datos del canvas:', error);
+      console.warn("No se pudieron obtener datos del canvas:", error);
       return { nodes: [], edges: [] };
     }
   }, []);
 
-  // Aplicar datos al canvas
+  // Aplicar datos al canvas (nodos con data.parameters, data.parameterDefinitions, etc.)
   const setCanvasData = useCallback((nodes, edges) => {
     if (!canvasRef.current) return;
-    
     try {
-      // Método 1: Si DagCanvas expone setNodes/setEdges
+      if (typeof canvasRef.current.setCanvasData === "function") {
+        canvasRef.current.setCanvasData(nodes, edges);
+        saveCanvasState(nodes, edges);
+        return;
+      }
       if (canvasRef.current.setNodes && canvasRef.current.setEdges) {
         canvasRef.current.setNodes(nodes);
         canvasRef.current.setEdges(edges);
+        saveCanvasState(nodes, edges);
       }
-      // Método 2: Si DagCanvas usa reactFlowInstance
-      else if (canvasRef.current.reactFlowInstance) {
-        const instance = canvasRef.current.reactFlowInstance;
-        instance.setNodes(nodes);
-        instance.setEdges(edges);
-      }
-      
-      // Guardar en localStorage
-      saveCanvasState({ nodes, edges });
     } catch (error) {
-      console.error('Error al aplicar datos al canvas:', error);
+      console.error("Error al aplicar datos al canvas:", error);
     }
   }, []);
 
@@ -114,7 +99,7 @@ export default function Home() {
         case "saveDag":
           try {
             // Guardar localmente primero
-            saveCanvasState({ nodes, edges });
+            saveCanvasState(nodes, edges);
             
             // Intentar guardar en backend
             const result = await dagService.saveToBackend(nodes, edges, 'Mi DAG');
@@ -134,7 +119,7 @@ export default function Home() {
             }
           } catch (error) {
             // Si falla el backend, al menos guardamos local
-            saveCanvasState({ nodes, edges });
+            saveCanvasState(nodes, edges);
             showNotif('✅ DAG guardado localmente', 'warning');
             dagLogger.log('saveDag', 'warning', { 
               error: error.message,

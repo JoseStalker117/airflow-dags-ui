@@ -40,11 +40,11 @@ function AnimatedRoutes() {
           } 
         />
         
-        {/* Ruta raíz - redirige según autenticación */}
-        <Route path="/" element={<Navigate to="/login" replace />} />
+        {/* Ruta raíz - ir al splash y luego a la app (sin exigir login) */}
+        <Route path="/" element={<Navigate to="/splash" replace />} />
         
-        {/* Cualquier otra ruta - redirige a login */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        {/* Cualquier otra ruta - ir a splash */}
+        <Route path="*" element={<Navigate to="/splash" replace />} />
       </Routes>
     </AnimatePresence>
   );

@@ -21,6 +21,7 @@ def require_auth(f):
         request.uid = payload['uid']
         request.user_email = payload['email']
         request.is_admin = payload.get('admin', False)
+        request.is_anonymous = payload.get('isAnonymous', False)
         return f(*args, **kwargs)
     
     return decorated_function

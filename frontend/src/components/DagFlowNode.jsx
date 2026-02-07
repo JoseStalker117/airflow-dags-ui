@@ -36,6 +36,7 @@ export default function DagFlowNode({ data }) {
   const getOperatorInfo = (type) => {
     const operatorStyles = {
       DAG: { icon: "account_tree", color: "indigo" },
+      ArgoWorkflow: { icon: "hub", color: "violet" },
       BashOperator: { icon: "terminal", color: "emerald" },
       PythonOperator: { icon: "code", color: "blue" },
       PythonVirtualenvOperator: { icon: "workspace", color: "indigo" },

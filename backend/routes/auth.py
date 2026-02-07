@@ -117,17 +117,14 @@ def login():
 
 @auth_bp.route('/login/anonymous', methods=['POST'])
 def login_anonymous():
-    """Login anónimo"""
+    """Login anónimo. No se registra usuario en Firebase Auth ni en Firestore."""
     try:
-        # Crear usuario anónimo en Firebase Auth
-        user = auth.create_user()
+        import uuid
+        # No crear usuario en Firebase Auth; solo generar identidad local
+        anonymous_uid = f"anon_{uuid.uuid4().hex[:16]}"
         
-        # Crear documento en Firestore
-        user_data = create_user_document(user.uid, email=None, is_anonymous=True)
-        
-        # Generar JWT
         token = create_jwt_token(
-            uid=user.uid,
+            uid=anonymous_uid,
             email='anonymous',
             is_admin=False,
             is_anonymous=True
@@ -136,7 +133,7 @@ def login_anonymous():
         return jsonify({
             'token': token,
             'user': {
-                'uid': user.uid,
+                'uid': anonymous_uid,
                 'email': 'anonymous',
                 'displayName': 'Usuario Anónimo',
                 'admin': False,
@@ -151,8 +148,21 @@ def login_anonymous():
 @auth_bp.route('/me', methods=['GET'])
 @require_auth
 def get_current_user():
-    """Obtiene información del usuario actual"""
+    """Obtiene información del usuario actual. Usuarios anónimos no tienen documento en Firestore."""
     try:
+        # Usuarios anónimos no tienen perfil en Firestore; responder desde el token
+        if getattr(request, 'is_anonymous', False):
+            return jsonify({
+                'uid': request.uid,
+                'email': 'anonymous',
+                'displayName': 'Usuario Anónimo',
+                'admin': False,
+                'isAnonymous': True,
+                'preferences': {},
+                'createdAt': None,
+                'lastLogin': None
+            }), 200
+
         profile = get_user_profile(request.uid)
         
         if not profile:

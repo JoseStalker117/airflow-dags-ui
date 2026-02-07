@@ -8,14 +8,34 @@ const STORAGE_KEYS = {
   USER_PREFERENCES: "dag_construct_preferences"
 };
 
+/** Deep-clone para objetos serializables (evita referencias y funciones) */
+const deepSerialize = (obj) => {
+  if (obj === null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(deepSerialize);
+  const out = {};
+  for (const key of Object.keys(obj)) {
+    const v = obj[key];
+    if (typeof v === "function") continue;
+    out[key] = deepSerialize(v);
+  }
+  return out;
+};
+
 /**
- * Guarda el estado del canvas (nodos y edges) en localStorage
- * @param {Array} nodes - Array de nodos del canvas
- * @param {Array} edges - Array de edges del canvas
+ * Guarda el estado del canvas (nodos y edges) en localStorage.
+ * Incluye contenido de paneles: parameters, parameterDefinitions, showParameters.
+ * @param {Array|Object} nodesOrPayload - Array de nodos o objeto { nodes, edges }
+ * @param {Array} [edges] - Array de edges (opcional si el primer arg es { nodes, edges })
  */
-export const saveCanvasState = (nodes, edges) => {
+export const saveCanvasState = (nodesOrPayload, edges) => {
   try {
-    // Serializar nodos sin funciones (onUpdate, onDelete)
+    const nodes = Array.isArray(nodesOrPayload)
+      ? nodesOrPayload
+      : (nodesOrPayload?.nodes ?? []);
+    const edgesList = Array.isArray(edges)
+      ? edges
+      : (nodesOrPayload?.edges ?? []);
+    // Serializar nodos sin funciones (onUpdate, onDelete); incluir todo el contenido de paneles
     const serializableNodes = nodes.map(node => ({
       id: node.id,
       type: node.type,
@@ -28,14 +48,16 @@ export const saveCanvasState = (nodes, edges) => {
         category: node.data.category,
         description: node.data.description,
         task_id: node.data.task_id,
-        parameters: node.data.parameters
+        parameters: deepSerialize(node.data.parameters || {}),
+        parameterDefinitions: deepSerialize(node.data.parameterDefinitions || {}),
+        showParameters: Boolean(node.data.showParameters),
         // Excluir onUpdate y onDelete (funciones no serializables)
       }
     }));
 
     const canvasData = {
       nodes: serializableNodes,
-      edges: edges.map(edge => ({
+      edges: edgesList.map(edge => ({
         id: edge.id,
         source: edge.source,
         target: edge.target,
@@ -88,6 +110,44 @@ export const clearCanvasState = () => {
     console.error("Error limpiando estado del canvas:", error);
     return false;
   }
+};
+
+/**
+ * Construye el payload del canvas listo para enviar al backend (misma forma que se persiste).
+ * Incluye nodos con parameters, parameterDefinitions y edges.
+ * @param {Array} nodes - Array de nodos (ej. initialNodes)
+ * @param {Array} edges - Array de edges
+ * @returns {Object} { nodes, edges } serializable para API
+ */
+export const getCanvasPayloadForBackend = (nodes, edges) => {
+  if (!nodes || !edges) return { nodes: [], edges: [] };
+  const serializableNodes = nodes.map(node => ({
+    id: node.id,
+    type: node.type,
+    position: node.position,
+    data: {
+      id: node.data?.id,
+      label: node.data?.label,
+      type: node.data?.type,
+      icon: node.data?.icon,
+      category: node.data?.category,
+      description: node.data?.description,
+      task_id: node.data?.task_id,
+      parameters: deepSerialize(node.data?.parameters || {}),
+      parameterDefinitions: deepSerialize(node.data?.parameterDefinitions || {}),
+    }
+  }));
+  const edgesList = edges.map(edge => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    sourceHandle: edge.sourceHandle,
+    targetHandle: edge.targetHandle,
+    type: edge.type,
+    style: edge.style,
+    markerEnd: edge.markerEnd
+  }));
+  return { nodes: serializableNodes, edges: edgesList };
 };
 
 /**
