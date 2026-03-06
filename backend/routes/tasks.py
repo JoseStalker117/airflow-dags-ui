@@ -11,7 +11,7 @@ def get_tasks():
     """Obtiene todas las tasks activas. Query: ?framework=airflow|argo (opcional)."""
     try:
         framework = request.args.get('framework')
-        tasks_ref = db.collection('task')
+        tasks_ref = db.collection('tasks')
         query = tasks_ref.where('isActive', '==', True)
         if framework in ('airflow', 'argo'):
             query = query.where('framework', '==', framework)
@@ -33,7 +33,7 @@ def get_tasks():
 def get_task(task_id):
     """Obtiene una task por ID"""
     try:
-        task_ref = db.collection('task').document(task_id)
+        task_ref = db.collection('tasks').document(task_id)
         task = task_ref.get()
         
         if not task.exists:
@@ -78,9 +78,9 @@ def create_task():
         # Crear documento con ID personalizado o auto-generado
         task_id = data.get('id', None)
         if task_id:
-            db.collection('task').document(task_id).set(task_data)
+            db.collection('tasks').document(task_id).set(task_data)
         else:
-            task_ref = db.collection('task').add(task_data)
+            task_ref = db.collection('tasks').add(task_data)
             task_id = task_ref[1].id
         
         return jsonify({'id': task_id, 'message': 'Task creada exitosamente'}), 201
@@ -95,7 +95,7 @@ def update_task(task_id):
     """Actualiza una task existente"""
     try:
         data = request.json
-        task_ref = db.collection('task').document(task_id)
+        task_ref = db.collection('tasks').document(task_id)
         
         if not task_ref.get().exists:
             return jsonify({'error': 'Task no encontrada'}), 404
@@ -119,7 +119,7 @@ def update_task(task_id):
 def delete_task(task_id):
     """Desactiva una task (soft delete)"""
     try:
-        task_ref = db.collection('task').document(task_id)
+        task_ref = db.collection('tasks').document(task_id)
         
         if not task_ref.get().exists:
             return jsonify({'error': 'Task no encontrada'}), 404

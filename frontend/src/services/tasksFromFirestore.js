@@ -20,9 +20,15 @@ export function taskDocToBlock(doc) {
     icon: doc.icon ?? 'extension',
     category: doc.category ?? 'others',
     description: doc.description ?? '',
-    parameters: doc.parameters ?? {},
+    
+    // ⭐ CAMBIO IMPORTANTE: Renombrar a parameterDefinitions
+    parameterDefinitions: doc.parameters ?? {},
+    
     framework: doc.framework ?? 'airflow',
+    platform: doc.platform ?? doc.framework ?? 'airflow',
+    template: doc.template ?? doc.type ?? 'default',
     isDefaultFavorite: doc.isDefaultFavorite ?? false,
+    isActive: doc.isActive ?? true,
   };
 }
 
