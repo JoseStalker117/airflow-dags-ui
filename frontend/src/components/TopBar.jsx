@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { topbarGroups } from "../data/topbarFunctions";
+import { getTopbarGroups } from "../data/topbarFunctions";
 
-export default function TopBar({ onAction }) {
+export default function TopBar({ onAction, isAdmin = false }) {
   const [activeGroup, setActiveGroup] = useState(null);
   const groupRefs = useRef({});
+  const topbarGroups = getTopbarGroups({ isAdmin });
 
   const getMenuPosition = (groupId) => {
     const anchor = groupRefs.current[groupId];

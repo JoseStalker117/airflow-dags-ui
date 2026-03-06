@@ -23,6 +23,9 @@ export function taskDocToBlock(doc) {
     
     // ⭐ CAMBIO IMPORTANTE: Renombrar a parameterDefinitions
     parameterDefinitions: doc.parameters ?? {},
+    importLiteral: doc.importLiteral ?? null,
+    imports: doc.imports ?? null,
+    operatorImport: doc.operatorImport ?? null,
     
     framework: doc.framework ?? 'airflow',
     platform: doc.platform ?? doc.framework ?? 'airflow',

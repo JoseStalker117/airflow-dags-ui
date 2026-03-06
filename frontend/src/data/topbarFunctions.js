@@ -1,4 +1,4 @@
-export const topbarGroups = [
+const baseTopbarGroups = [
   {
     id: "file",
     label: "Archivo",
@@ -52,13 +52,6 @@ export const topbarGroups = [
         icon: "data_object",
         action: "exportJson",
         shortcut: "Ctrl+J"
-      },
-      {
-        id: "exportYAML",
-        label: "Exportar YAML",
-        icon: "article",
-        action: "exportYaml",
-        shortcut: "Ctrl+Y"
       }
     ]
   },
@@ -119,6 +112,28 @@ export const topbarGroups = [
     ]
   }
 ];
+
+const adminTopbarGroup = {
+  id: "admin",
+  label: "Admin",
+  icon: "admin_panel_settings",
+  functions: [
+    {
+      id: "manageTasks",
+      label: "Administrar Tasks",
+      icon: "widgets",
+      action: "openTaskAdmin",
+      shortcut: ""
+    }
+  ]
+};
+
+export const getTopbarGroups = ({ isAdmin = false } = {}) => {
+  if (!isAdmin) return baseTopbarGroups;
+  return [...baseTopbarGroups, adminTopbarGroup];
+};
+
+export const topbarGroups = baseTopbarGroups;
 
 // Mantener compatibilidad hacia atrás
 export const topbarFunctions = topbarGroups.flatMap(group => group.functions);

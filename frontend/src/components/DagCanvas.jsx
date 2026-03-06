@@ -1012,10 +1012,10 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
           );
 
           if (nodeHasAnyEdge) {
-            showNotification(
-              "Nodo conectado: usa una zona válida (antes/después/rama) para reordenar",
-              "warning",
-            );
+            // showNotification(
+            //   "Nodo conectado: usa una zona válida (antes/después/rama) para reordenar",
+            //   "warning",
+            // );
             return prev;
           }
 

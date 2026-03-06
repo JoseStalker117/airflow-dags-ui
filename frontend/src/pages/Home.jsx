@@ -3,11 +3,14 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import TopBar from "../components/TopBar";
 import BlockPalette from "../components/BlockPalette";
 import DagCanvas from "../components/DagCanvas";
+import AdminTasksPanel from "../components/AdminTasksPanel";
 import { clearCanvasState, saveCanvasState, loadCanvasState } from "../utils/storage";
 import { saveUserPreferences, loadUserPreferences } from "../utils/storage";
 import { dagService, dagLogger } from "../services/dagService";
+import { useAuth } from "../context/AuthContext";
 
 export default function Home() {
+  const { isAdmin } = useAuth();
   const canvasRef = useRef(null);
   const paletteRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -21,6 +24,7 @@ export default function Home() {
   const [notification, setNotification] = useState(null);
   const [isMobileLayout, setIsMobileLayout] = useState(() => window.innerWidth < 1024);
   const [isPaletteOpen, setIsPaletteOpen] = useState(() => window.innerWidth >= 1024);
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
 
   // ============== HELPERS ==============
   
@@ -164,16 +168,6 @@ export default function Home() {
           });
           break;
 
-        case "exportYaml":
-          const yamlFilename = `dag_${Date.now()}.yaml`;
-          dagService.exportToYAML(nodes, edges, yamlFilename);
-          showNotif(`📋 Exportado: ${yamlFilename}`);
-          dagLogger.log('exportYaml', 'success', { 
-            filename: yamlFilename,
-            nodeCount: nodes.length 
-          });
-          break;
-
         case "copyJson":
           const copyResult = await dagService.copyToClipboard(nodes, edges);
           if (copyResult.success) {
@@ -256,6 +250,14 @@ Estado actual:
 Desarrollado con ❤️`);
           break;
 
+        case "openTaskAdmin":
+          if (!isAdmin) {
+            showNotif("❌ Esta opción requiere admin", "error");
+            break;
+          }
+          setIsAdminPanelOpen(true);
+          break;
+
         default:
           console.log(`Acción no reconocida: ${action}`);
           dagLogger.log(action, 'pending', { 
@@ -267,7 +269,7 @@ Desarrollado con ❤️`);
       showNotif(`❌ Error: ${error.message}`, 'error');
       dagLogger.log(action, 'error', { error: error.message });
     }
-  }, [getCanvasData, setCanvasData, showNotif]);
+  }, [getCanvasData, setCanvasData, showNotif, isAdmin]);
 
   // ============== IMPORTAR ARCHIVO ==============
   
@@ -383,7 +385,7 @@ Desarrollado con ❤️`);
             animate={{ opacity: 1, y: 20, scale: 1 }}
             exit={{ opacity: 0, y: -50, scale: 0.9 }}
             transition={{ type: "spring", damping: 20, stiffness: 300 }}
-            className="fixed top-0 right-3 sm:right-4 z-[100] pointer-events-none"
+            className="fixed top-0 right-3 sm:right-4 z-[5000] pointer-events-none"
           >
             <div className={`
               px-4 sm:px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 min-w-[240px] max-w-[92vw] sm:min-w-[300px]
@@ -409,7 +411,13 @@ Desarrollado con ❤️`);
       </AnimatePresence>
 
       {/* TopBar */}
-      <TopBar onAction={handleTopBarAction} />
+      <TopBar onAction={handleTopBarAction} isAdmin={isAdmin} />
+
+      <AdminTasksPanel
+        isOpen={isAdminPanelOpen}
+        onClose={() => setIsAdminPanelOpen(false)}
+        onSaved={() => showNotif("✅ Tasks actualizadas en Firestore")}
+      />
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden relative">

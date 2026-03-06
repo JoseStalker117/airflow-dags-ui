@@ -1,0 +1,37 @@
+{
+  "tasks": [
+    {
+      "id": "ArgoWorkflow",
+      "name": "Argo Workflow",
+      "type": "ArgoWorkflow",
+      "icon": "hub",
+      "category": "argo",
+      "description": "Workflow principal de Argo",
+      "framework": "argo",
+      "platform": "argo",
+      "template": "argo_workflow",
+      "isDefaultFavorite": true,
+      "isActive": true,
+      "parameters": {
+        "name": {
+          "type": "string",
+          "default": "my-workflow",
+          "description": "Nombre del workflow"
+        },
+        "namespace": {
+          "type": "string",
+          "default": "default"
+        },
+        "serviceAccountName": {
+          "type": "string",
+          "default": "default"
+        },
+        "entrypoint": {
+          "type": "string",
+          "default": "main",
+          "description": "Template de entrada"
+        }
+      }
+    }
+  ]
+}

@@ -59,6 +59,7 @@ export const authAPI = {
 // Task endpoints
 export const taskAPI = {
   getAll: (config = {}) => apiClient.get('/tasks', config),
+  getAllAdmin: (config = {}) => apiClient.get('/admin/tasks', config),
   getById: (id) => apiClient.get(`/tasks/${id}`),
   create: (data) => apiClient.post('/tasks', data),
   update: (id, data) => apiClient.put(`/tasks/${id}`, data),

@@ -4,6 +4,18 @@ from middleware.auth import require_auth, require_admin
 from datetime import datetime
 
 tasks_bp = Blueprint('tasks', __name__)
+TASK_REQUIRED_FIELDS = [
+    'id',
+    'name',
+    'type',
+    'icon',
+    'category',
+    'description',
+    'framework',
+    'platform',
+    'template',
+    'parameters',
+]
 
 # GET todas las tasks desde Firestore (público, sin autenticación)
 @tasks_bp.route('/tasks', methods=['GET'])
@@ -25,6 +37,32 @@ def get_tasks():
 
         return jsonify(tasks_list), 200
 
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# GET todas las tasks para administración (incluye inactivas)
+@tasks_bp.route('/admin/tasks', methods=['GET'])
+@require_admin
+def get_tasks_admin():
+    """Obtiene todas las tasks. Query: ?framework=airflow|argo&includeInactive=true|false"""
+    try:
+        framework = request.args.get('framework')
+        include_inactive = request.args.get('includeInactive', 'true').lower() == 'true'
+
+        query = db.collection('tasks')
+        if not include_inactive:
+            query = query.where('isActive', '==', True)
+        if framework in ('airflow', 'argo'):
+            query = query.where('framework', '==', framework)
+
+        tasks = query.stream()
+        tasks_list = []
+        for task in tasks:
+            task_data = task.to_dict()
+            task_data['id'] = task.id
+            tasks_list.append(task_data)
+
+        return jsonify(tasks_list), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -55,13 +93,17 @@ def create_task():
     try:
         data = request.json
         
-        # Validaciones básicas (framework obligatorio: airflow | argo)
-        required_fields = ['name', 'category', 'platform', 'template', 'framework']
+        # Validaciones básicas
+        required_fields = TASK_REQUIRED_FIELDS
         for field in required_fields:
-            if field not in data:
+            if field not in data or data.get(field) in (None, ''):
                 return jsonify({'error': f'Campo requerido: {field}'}), 400
         if data.get('framework') not in ('airflow', 'argo'):
             return jsonify({'error': 'framework debe ser "airflow" o "argo"'}), 400
+        if not isinstance(data.get('parameters'), dict):
+            return jsonify({'error': 'parameters debe ser un objeto'}), 400
+        if 'task_id' not in data.get('parameters', {}):
+            return jsonify({'error': 'parameters.task_id es obligatorio'}), 400
         
         # Agregar metadata
         task_data = {
@@ -99,6 +141,13 @@ def update_task(task_id):
         
         if not task_ref.get().exists:
             return jsonify({'error': 'Task no encontrada'}), 404
+
+        if 'framework' in data and data.get('framework') not in ('airflow', 'argo'):
+            return jsonify({'error': 'framework debe ser "airflow" o "argo"'}), 400
+        if 'parameters' in data and not isinstance(data.get('parameters'), dict):
+            return jsonify({'error': 'parameters debe ser un objeto'}), 400
+        if 'parameters' in data and 'task_id' not in data.get('parameters', {}):
+            return jsonify({'error': 'parameters.task_id es obligatorio'}), 400
         
         # Actualizar metadata
         update_data = {
