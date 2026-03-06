@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 // Crear instancia de axios
 const apiClient = axios.create({
@@ -58,7 +58,7 @@ export const authAPI = {
 
 // Task endpoints
 export const taskAPI = {
-  getAll: () => apiClient.get('/tasks'),
+  getAll: (config = {}) => apiClient.get('/tasks', config),
   getById: (id) => apiClient.get(`/tasks/${id}`),
   create: (data) => apiClient.post('/tasks', data),
   update: (id, data) => apiClient.put(`/tasks/${id}`, data),

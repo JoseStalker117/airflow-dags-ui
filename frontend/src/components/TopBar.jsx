@@ -6,6 +6,17 @@ export default function TopBar({ onAction }) {
   const [activeGroup, setActiveGroup] = useState(null);
   const groupRefs = useRef({});
 
+  const getMenuPosition = (groupId) => {
+    const anchor = groupRefs.current[groupId];
+    if (!anchor) return { top: 56, left: 8 };
+
+    const rect = anchor.getBoundingClientRect();
+    return {
+      top: rect.bottom,
+      left: Math.max(8, rect.left),
+    };
+  };
+
   // Cerrar menú al hacer clic fuera
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -34,17 +45,17 @@ export default function TopBar({ onAction }) {
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.6 }}
-      className="bg-white border-b border-gray-200 shadow-sm z-50"
+      className="sticky top-0 bg-white border-b border-gray-200 shadow-sm z-[120] flex-shrink-0"
     >
       {/* Barra principal de grupos */}
-      <div className="flex items-center gap-1 px-2 py-2 border-b border-gray-100">
+      <div className="flex items-center gap-1 px-2 py-2 border-b border-gray-100 overflow-x-auto whitespace-nowrap">
         {topbarGroups.map((group) => (
           <div key={group.id} ref={(el) => (groupRefs.current[group.id] = el)} className="relative">
             <button
               onClick={() => handleGroupClick(group.id)}
               className={`
-                flex items-center gap-2 px-4 py-2 rounded-t-md text-sm font-medium
-                transition-all duration-200 min-w-[100px]
+                flex items-center gap-2 px-3 sm:px-4 py-2 rounded-t-md text-xs sm:text-sm font-medium
+                transition-all duration-200 min-w-[88px] sm:min-w-[100px]
                 ${activeGroup === group.id
                   ? "bg-blue-50 text-blue-700 border-t-2 border-x border-blue-300 border-b-2 border-b-transparent"
                   : "text-slate-700 hover:bg-gray-50 hover:text-slate-900"
@@ -70,7 +81,8 @@ export default function TopBar({ onAction }) {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute top-full left-0 mt-0 bg-white border border-blue-300 border-t-0 rounded-b-md shadow-lg min-w-[220px] z-50"
+                  className="fixed mt-0 bg-white border border-blue-300 border-t-0 rounded-b-md shadow-lg min-w-[220px] max-w-[90vw] z-[220]"
+                  style={getMenuPosition(group.id)}
                 >
                   <div className="py-1">
                     {group.functions.map((fn) => (

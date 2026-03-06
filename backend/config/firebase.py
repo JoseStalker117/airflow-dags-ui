@@ -32,6 +32,8 @@ db = firestore.client()
 # Configuración JWT
 JWT_SECRET = os.getenv('JWT_SECRET_KEY')
 JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
+if not JWT_SECRET:
+    raise RuntimeError("JWT_SECRET_KEY no está definido")
 
 def create_jwt_token(uid, email, is_admin=False, is_anonymous=False):
     """Genera un token JWT personalizado"""

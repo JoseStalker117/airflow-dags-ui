@@ -114,24 +114,66 @@ export default function DagFlowNode({ data }) {
   // Determinar si es un operador de branch
   const isBranch = data.type === "BranchPythonOperator";
   // Determinar si es un nodo DAG (contenedor)
-  const isDAG = data.type === "DAG";
+  const isDAG = data.type === "DAG" || data.type === "ArgoWorkflow";
+
+  const inferTypeFromValue = (value) => {
+    if (typeof value === "boolean") return "boolean";
+    if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+    if (Array.isArray(value)) return "array";
+    if (value && typeof value === "object") return "object";
+    return "string";
+  };
+
+  const normalizeParamDef = (value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return {
+        type: value.type || inferTypeFromValue(value.default),
+        default: value.default,
+        description: value.description || "",
+        hint: value.hint || "",
+      };
+    }
+
+    return {
+      type: inferTypeFromValue(value),
+      default: value,
+      description: "",
+      hint: "",
+    };
+  };
 
   // Obtener definiciones de parámetros desde data (si están disponibles)
-  const parameterDefinitions =
+  const rawParameterDefinitions =
     data.parameterDefinitions || data.parameters || {};
+
+  const parameterDefinitions = Object.entries(rawParameterDefinitions).reduce(
+    (acc, [key, value]) => {
+      acc[key] = normalizeParamDef(value);
+      return acc;
+    },
+    {},
+  );
   
   // Contar parámetros definidos (no solo los que tienen valores)
   const paramDefinitionsCount = parameterDefinitions 
     ? Object.keys(parameterDefinitions).length 
     : 0;
 
+  const toggleParamsPanel = () => {
+    const next = !showParams;
+    setShowParams(next);
+    if (data.onUpdate) {
+      data.onUpdate({ showParameters: next });
+    }
+  };
+
   // Función para actualizar un parámetro
   const updateParameter = (key, value) => {
     const updated = { ...localParameters, [key]: value };
     setLocalParameters(updated);
     
-    // Si se actualiza task_id, actualizar también data.task_id
-    const updatedData = { ...data, parameters: updated };
+    // Si se actualiza task_id, actualizar también task_id del nodo
+    const updatedData = { parameters: updated };
     if (key === "task_id") {
       updatedData.task_id = value;
       setTaskName(value); // Sincronizar el título inmediatamente
@@ -190,7 +232,7 @@ export default function DagFlowNode({ data }) {
                 )
               }
               className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
-              placeholder={paramDef.default}
+              placeholder={paramDef.hint || String(paramDef.default ?? "")}
             />
             {paramDef.description && (
               <span className="text-xs text-slate-500 italic">
@@ -218,7 +260,7 @@ export default function DagFlowNode({ data }) {
               }}
               className="text-xs border border-gray-300 rounded px-2 py-1 resize-none"
               rows={2}
-              placeholder='["item1", "item2"]'
+              placeholder={paramDef.hint || '["item1", "item2"]'}
             />
             {paramDef.description && (
               <span className="text-xs text-slate-500 italic">
@@ -248,7 +290,7 @@ export default function DagFlowNode({ data }) {
               }}
               className="text-xs font-mono border border-gray-300 rounded px-2 py-1 resize-none"
               rows={3}
-              placeholder='{"key": "value"}'
+              placeholder={paramDef.hint || '{"key": "value"}'}
             />
             {paramDef.description && (
               <span className="text-xs text-slate-500 italic">
@@ -269,7 +311,7 @@ export default function DagFlowNode({ data }) {
               value={value || ""}
               onChange={(e) => updateParameter(key, e.target.value)}
               className="flex-1 text-xs border border-gray-300 rounded px-2 py-1"
-              placeholder={paramDef.default || ""}
+              placeholder={paramDef.hint || String(paramDef.default ?? "")}
             />
             {paramDef.description && (
               <span className="text-xs text-slate-500 italic">
@@ -324,7 +366,7 @@ export default function DagFlowNode({ data }) {
                 </div>
                 <div className="flex gap-1 sm:gap-1.5 self-start sm:self-auto mt-1 sm:mt-0">
                   <button
-                    onClick={() => setShowParams(!showParams)}
+                    onClick={toggleParamsPanel}
                     className={`px-2 py-1.5 sm:px-2.5 sm:py-1 text-xs font-medium rounded transition-colors flex-shrink-0 ${
                       showParams
                         ? "bg-indigo-100 text-indigo-700"
@@ -357,12 +399,7 @@ export default function DagFlowNode({ data }) {
               Object.keys(parameterDefinitions).length > 0 && (
                 <div className="mt-3 pt-3 border-t border-indigo-200 space-y-2 max-h-[400px] overflow-y-auto">
                   {Object.entries(parameterDefinitions).map(
-                    ([key, paramDef]) => {
-                      if (typeof paramDef === "object" && paramDef !== null) {
-                        return renderParameterField(key, paramDef);
-                      }
-                      return null;
-                    },
+                    ([key, paramDef]) => renderParameterField(key, paramDef),
                   )}
                 </div>
               )}
@@ -386,9 +423,16 @@ export default function DagFlowNode({ data }) {
                   type="text"
                   value={taskName}
                   onChange={(e) => {
-                    setTaskName(e.target.value);
+                    const nextTaskId = e.target.value;
+                    setTaskName(nextTaskId);
                     if (data.onUpdate) {
-                      data.onUpdate({ ...data, task_id: e.target.value });
+                      data.onUpdate({
+                        task_id: nextTaskId,
+                        parameters: {
+                          ...localParameters,
+                          task_id: nextTaskId,
+                        },
+                      });
                     }
                   }}
                   className="font-semibold text-sm text-slate-800 bg-transparent border-none 
@@ -406,7 +450,7 @@ export default function DagFlowNode({ data }) {
               <div className="flex gap-1">
                 {paramDefinitionsCount > 0 && (
                   <button
-                    onClick={() => setShowParams(!showParams)}
+                    onClick={toggleParamsPanel}
                     className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
                       showParams
                         ? "bg-blue-100 text-blue-700"
@@ -439,12 +483,7 @@ export default function DagFlowNode({ data }) {
               Object.keys(parameterDefinitions).length > 0 && (
                 <div className="mt-3 pt-3 border-t border-gray-200 space-y-2 max-h-[300px] overflow-y-auto">
                   {Object.entries(parameterDefinitions).map(
-                    ([key, paramDef]) => {
-                      if (typeof paramDef === "object" && paramDef !== null) {
-                        return renderParameterField(key, paramDef);
-                      }
-                      return null;
-                    },
+                    ([key, paramDef]) => renderParameterField(key, paramDef),
                   )}
                 </div>
               )}

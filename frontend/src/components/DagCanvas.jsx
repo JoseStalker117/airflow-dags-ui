@@ -9,475 +9,20 @@ import ReactFlow, {
   MarkerType,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import dagre from "dagre";
 import DagFlowNode from "./DagFlowNode";
 import { saveCanvasState, loadCanvasState, getCanvasPayloadForBackend } from "../utils/storage";
-
-// ============================================================================
-// UTILIDADES DE VALIDACIÓN Y DETECCIÓN DE CICLOS
-// ============================================================================
-
-/**
- * Detecta si agregar una arista crearía un ciclo en el grafo
- */
-const wouldCreateCycle = (sourceId, targetId, edges) => {
-  if (sourceId === targetId) return true;
-
-  const visited = new Set();
-  const queue = [targetId];
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-
-    if (current === sourceId) return true;
-    if (visited.has(current)) continue;
-
-    visited.add(current);
-
-    const outgoing = edges.filter((e) => e.source === current);
-    outgoing.forEach((e) => {
-      if (!visited.has(e.target)) {
-        queue.push(e.target);
-      }
-    });
-  }
-
-  return false;
-};
-
-/**
- * Valida la integridad del DAG
- */
-const validateDAG = (nodes, edges) => {
-  const dagNodes = nodes.filter(
-    (n) => n.data?.type === "DAG" || n.data?.type === "ArgoWorkflow"
-  );
-
-  // Detectar ciclos
-  const cycles = [];
-  edges.forEach((edge) => {
-    const restEdges = edges.filter((e) => e.id !== edge.id);
-    if (wouldCreateCycle(edge.target, edge.source, restEdges)) {
-      cycles.push(edge);
-    }
-  });
-
-  // Encontrar nodos huérfanos (sin conexiones)
-  const connectedNodes = new Set();
-  edges.forEach((e) => {
-    connectedNodes.add(e.source);
-    connectedNodes.add(e.target);
-  });
-
-  const isDAGLike = (n) =>
-    n.data?.type === "DAG" || n.data?.type === "ArgoWorkflow";
-  const orphanNodes = nodes.filter(
-    (n) => !connectedNodes.has(n.id) && !isDAGLike(n),
-  );
-
-  return {
-    isValid: cycles.length === 0,
-    hasCycles: cycles.length > 0,
-    cycleEdges: cycles,
-    hasOrphanNodes: orphanNodes.length > 0,
-    orphanNodes,
-    hasMultipleDAGs: dagNodes.length > 1,
-    dagCount: dagNodes.length,
-  };
-};
-
-// ============================================================================
-// UTILIDADES DE RECONEXIÓN DE NODOS
-// ============================================================================
-
-/**
- * Reconecta un nodo insertándolo ANTES del nodo objetivo
- */
-const reconnectAbove = (movedNodeId, targetNode, edges, nodes) => {
-  const incomingToTarget = edges.find((e) => e.target === targetNode.id);
-  let newEdges = edges.filter(
-    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
-  );
-
-  if (incomingToTarget) {
-    newEdges = newEdges.filter((e) => e.id !== incomingToTarget.id);
-
-    const sourceNodeData = nodes.find((n) => n.id === incomingToTarget.source);
-    const isFromDAG =
-      sourceNodeData?.data?.type === "DAG" ||
-      sourceNodeData?.data?.type === "ArgoWorkflow";
-    const isFromBranch = sourceNodeData?.data?.type === "BranchPythonOperator";
-
-    let strokeColor = "#64748b";
-    if (isFromDAG) strokeColor = "#6366f1";
-    else if (isFromBranch) {
-      strokeColor =
-        incomingToTarget.sourceHandle === "true"
-          ? "#22c55e"
-          : incomingToTarget.sourceHandle === "false"
-            ? "#ef4444"
-            : "#64748b";
-    }
-
-    newEdges.push({
-      id: `e${incomingToTarget.source}-${incomingToTarget.sourceHandle || ""}-${movedNodeId}`,
-      source: incomingToTarget.source,
-      sourceHandle: incomingToTarget.sourceHandle,
-      target: movedNodeId,
-      type: "smoothstep",
-      animated: true,
-      style: { stroke: strokeColor, strokeWidth: 2 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
-    });
-  }
-
-  newEdges.push({
-    id: `e${movedNodeId}-${targetNode.id}`,
-    source: movedNodeId,
-    target: targetNode.id,
-    type: "smoothstep",
-    animated: true,
-    style: { stroke: "#64748b", strokeWidth: 2 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
-  });
-
-  return newEdges;
-};
-
-/**
- * Reconecta un nodo insertándolo DESPUÉS del nodo objetivo
- */
-const reconnectBelow = (movedNodeId, targetNode, edges, nodes) => {
-  const isTargetBranch = targetNode.data?.type === "BranchPythonOperator";
-  if (isTargetBranch) return edges;
-
-  let newEdges = edges.filter(
-    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
-  );
-
-  const outgoingFromTarget = edges.find((e) => e.source === targetNode.id);
-
-  if (outgoingFromTarget) {
-    newEdges = newEdges.filter((e) => e.id !== outgoingFromTarget.id);
-
-    newEdges.push({
-      id: `e${movedNodeId}-${outgoingFromTarget.target}`,
-      source: movedNodeId,
-      target: outgoingFromTarget.target,
-      type: "smoothstep",
-      animated: true,
-      style: { stroke: "#64748b", strokeWidth: 2 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
-    });
-  }
-
-  const isTargetDAG =
-    targetNode.data?.type === "DAG" ||
-    targetNode.data?.type === "ArgoWorkflow";
-  const strokeColor = isTargetDAG ? "#6366f1" : "#64748b";
-
-  newEdges.push({
-    id: `e${targetNode.id}-${movedNodeId}`,
-    source: targetNode.id,
-    target: movedNodeId,
-    type: "smoothstep",
-    animated: true,
-    style: { stroke: strokeColor, strokeWidth: 2 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
-  });
-
-  return newEdges;
-};
-
-/**
- * Reconecta un nodo en una rama de BranchPythonOperator
- */
-const reconnectBranch = (movedNodeId, targetNode, branch, edges) => {
-  const handleId = branch === "true" ? "true" : "false";
-  const strokeColor = branch === "true" ? "#22c55e" : "#ef4444";
-
-  let newEdges = edges.filter(
-    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
-  );
-
-  const existingBranchEdge = edges.find(
-    (e) => e.source === targetNode.id && e.sourceHandle === handleId,
-  );
-
-  if (existingBranchEdge) {
-    newEdges = newEdges.filter((e) => e.id !== existingBranchEdge.id);
-
-    newEdges.push({
-      id: `e${movedNodeId}-${existingBranchEdge.target}`,
-      source: movedNodeId,
-      target: existingBranchEdge.target,
-      type: "smoothstep",
-      animated: true,
-      style: { stroke: "#64748b", strokeWidth: 2 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
-    });
-  }
-
-  newEdges.push({
-    id: `e${targetNode.id}-${handleId}-${movedNodeId}`,
-    source: targetNode.id,
-    sourceHandle: handleId,
-    target: movedNodeId,
-    type: "smoothstep",
-    animated: true,
-    style: { stroke: strokeColor, strokeWidth: 2 },
-    markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor },
-  });
-
-  return newEdges;
-};
-
-/**
- * Limpia las conexiones de un nodo que está siendo movido
- */
-const cleanupMovedNodeConnections = (movedNodeId, edges) => {
-  const incoming = edges.find((e) => e.target === movedNodeId);
-  const outgoing = edges.find((e) => e.source === movedNodeId);
-
-  let cleanedEdges = edges.filter(
-    (e) => e.source !== movedNodeId && e.target !== movedNodeId,
-  );
-
-  if (incoming && outgoing && incoming.source !== outgoing.target) {
-    const connectionExists = cleanedEdges.some(
-      (e) =>
-        e.source === incoming.source &&
-        e.target === outgoing.target &&
-        e.sourceHandle === incoming.sourceHandle,
-    );
-
-    if (!connectionExists) {
-      cleanedEdges.push({
-        id: `e${incoming.source}-${incoming.sourceHandle || ""}-${outgoing.target}`,
-        source: incoming.source,
-        sourceHandle: incoming.sourceHandle,
-        target: outgoing.target,
-        type: "smoothstep",
-        animated: true,
-        style: incoming.style || { stroke: "#64748b", strokeWidth: 2 },
-        markerEnd: incoming.markerEnd || {
-          type: MarkerType.ArrowClosed,
-          color: "#64748b",
-        },
-      });
-    }
-  }
-
-  return cleanedEdges;
-};
-
-// Configuración del layout de árbol
-const getLayoutedElements = (nodes, edges, direction = "TB") => {
-  if (!nodes || nodes.length === 0) {
-    return { nodes: [], edges };
-  }
-
-  // Separar nodos DAG/Argo de tareas
-  const dagNodes = nodes.filter(
-    (n) => n.data && (n.data.type === "DAG" || n.data.type === "ArgoWorkflow")
-  );
-  const taskNodes = nodes.filter(
-    (n) =>
-      !n.data ||
-      (n.data.type !== "DAG" && n.data.type !== "ArgoWorkflow")
-  );
-
-  // ---------------------------
-  // CASO CON AL MENOS UN DAG Y TAREAS
-  // ---------------------------
-  if (dagNodes.length > 0 && taskNodes.length > 0) {
-    const dagNode = dagNodes[0]; // layout usa el primer DAG como raíz
-    const dagId = dagNode.id;
-
-    const dagreGraph = new dagre.graphlib.Graph();
-    dagreGraph.setDefaultEdgeLabel(() => ({}));
-    dagreGraph.setGraph({
-      rankdir: direction,
-      nodesep: 90,
-      ranksep: 140,
-      marginx: 80,
-      marginy: 80,
-    });
-
-    // DAG - Calcular dimensiones dinámicamente basado en si está expandido
-    const dagData = dagNode.data || {};
-    const isDAGExpanded = dagData.showParameters === true;
-    const dagParamsCount = dagData.parameterDefinitions
-      ? Object.keys(dagData.parameterDefinitions).length
-      : 0;
-    const dagParamHeight = 28;
-
-    let dagWidth = 460; // Ancho base
-    let dagHeight = 180; // Alto base
-
-    if (isDAGExpanded && dagParamsCount > 0) {
-      // Ajustar altura si está expandido
-      dagHeight += Math.min(dagParamsCount * dagParamHeight + 60, 400); // Max 400px extra
-    }
-
-    dagreGraph.setNode(dagId, {
-      width: dagWidth,
-      height: dagHeight,
-    });
-
-    // Tareas
-    taskNodes.forEach((node) => {
-      const data = node.data || {};
-
-      const isBranch = data.type === "BranchPythonOperator";
-      const isExpanded = data.showParameters === true;
-
-      const paramsCount = data.parameterDefinitions
-        ? Object.keys(data.parameterDefinitions).length
-        : 0;
-
-      const paramHeight = 28;
-
-      let width = isBranch ? 420 : 280;
-      let height = isBranch ? 150 : 100;
-
-      if (isExpanded) {
-        width += isBranch ? 160 : 60;
-        height += paramsCount * paramHeight + 30;
-      }
-
-      dagreGraph.setNode(node.id, {
-        width,
-        height,
-      });
-    });
-
-    // Edges reales
-    edges.forEach((edge) => {
-      dagreGraph.setEdge(edge.source, edge.target);
-    });
-
-    // Conectar tareas sueltas al DAG para layout
-    const connected = new Set();
-    edges.forEach((e) => {
-      connected.add(e.source);
-      connected.add(e.target);
-    });
-
-    taskNodes.forEach((node) => {
-      if (!connected.has(node.id)) {
-        dagreGraph.setEdge(dagId, node.id);
-      }
-    });
-
-    dagre.layout(dagreGraph);
-
-    // DAG posición
-    const dagPos = dagreGraph.node(dagId);
-    const layoutedDag = {
-      ...dagNode,
-      position: {
-        x: dagPos.x - dagPos.width / 2,
-        y: dagPos.y - dagPos.height / 2,
-      },
-    };
-
-    // Tareas posición
-    const layoutedTasks = taskNodes.map((node) => {
-      const pos = dagreGraph.node(node.id);
-      const isBranch = node.data && node.data.type === "BranchPythonOperator";
-      const offsetX = isBranch ? 40 : 0;
-
-      return {
-        ...node,
-        position: {
-          x: pos.x - pos.width / 2 + offsetX,
-          y: pos.y - pos.height / 2,
-        },
-      };
-    });
-
-    return {
-      nodes: [layoutedDag, ...layoutedTasks],
-      edges,
-    };
-  }
-
-  // ---------------------------
-  // CASO SIN DAG
-  // ---------------------------
-  const dagreGraph = new dagre.graphlib.Graph();
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
-  dagreGraph.setGraph({
-    rankdir: direction,
-    nodesep: 110,
-    ranksep: 160,
-    marginx: 80,
-    marginy: 80,
-  });
-
-  nodes.forEach((node) => {
-    const data = node.data || {};
-
-    const isDAG =
-      data.type === "DAG" || data.type === "ArgoWorkflow";
-    const isBranch = data.type === "BranchPythonOperator";
-
-    dagreGraph.setNode(node.id, {
-      width: isDAG ? 460 : isBranch ? 420 : 280,
-      height: isDAG ? 180 : isBranch ? 150 : 100,
-    });
-  });
-
-  edges.forEach((edge) => {
-    dagreGraph.setEdge(edge.source, edge.target);
-  });
-
-  const dagNode = nodes.find(
-    (n) =>
-      n.data &&
-      (n.data.type === "DAG" || n.data.type === "ArgoWorkflow")
-  );
-
-  const connected = new Set();
-  edges.forEach((e) => {
-    connected.add(e.source);
-    connected.add(e.target);
-  });
-
-  if (dagNode) {
-    nodes.forEach((node) => {
-      if (
-        node.id !== dagNode.id &&
-        !connected.has(node.id) &&
-        node.data?.type !== "DAG" &&
-        node.data?.type !== "ArgoWorkflow"
-      ) {
-        dagreGraph.setEdge(dagNode.id, node.id);
-      }
-    });
-  }
-
-  dagre.layout(dagreGraph);
-
-  const layoutedNodes = nodes.map((node) => {
-    const pos = dagreGraph.node(node.id);
-    if (!pos) return node;
-
-    const isBranch = node.data && node.data.type === "BranchPythonOperator";
-    const offsetX = isBranch ? 40 : 0;
-
-    return {
-      ...node,
-      position: {
-        x: pos.x - pos.width / 2 + offsetX,
-        y: pos.y - pos.height / 2,
-      },
-    };
-  });
-
-  return { nodes: layoutedNodes, edges };
-};
+import {
+  wouldCreateCycle,
+  validateDAG,
+  sortNodesWithDAGFirst,
+} from "./dagCanvas/graphValidation";
+import { getLayoutedElements } from "./dagCanvas/layoutUtils";
+import {
+  reconnectAbove,
+  reconnectBelow,
+  reconnectBranch,
+  cleanupMovedNodeConnections,
+} from "./dagCanvas/edgeReconnection";
 
 // Tipos definidos fuera del componente
 const edgeTypes = {};
@@ -502,16 +47,25 @@ const defaultEdgeOptions = {
 
 const defaultViewport = { x: 0, y: 0, zoom: 1 };
 const reactFlowStyle = { width: "100%", height: "100%" };
+const ROOT_TYPES = new Set(["DAG", "ArgoWorkflow"]);
+const isRootNodeType = (type) => ROOT_TYPES.has(type);
+const isRootNode = (node) => isRootNodeType(node?.data?.type);
+const isBranchNode = (node) => node?.data?.type === "BranchPythonOperator";
 
-// Ordenar nodos: tipos DAG/ArgoWorkflow primero (para layout), luego el resto
-const sortNodesWithDAGFirst = (nodes) => {
-  const dagNodes = nodes.filter(
-    (n) => n.data?.type === "DAG" || n.data?.type === "ArgoWorkflow"
-  );
-  const taskNodes = nodes.filter(
-    (n) => !n.data || (n.data.type !== "DAG" && n.data.type !== "ArgoWorkflow")
-  );
-  return [...dagNodes, ...taskNodes];
+const inferFrameworkFromNodeData = (data) => {
+  if (!data) return null;
+  if (data.framework === "airflow" || data.platform === "airflow") return "airflow";
+  if (data.framework === "argo" || data.platform === "argo") return "argo";
+  if (data.type === "DAG") return "airflow";
+  if (data.type === "ArgoWorkflow") return "argo";
+  return null;
+};
+
+const getCanvasFramework = (nodes) => {
+  const root = nodes.find(isRootNode);
+  if (root) return inferFrameworkFromNodeData(root.data);
+  const firstTask = nodes.find((n) => !isRootNode(n));
+  return firstTask ? inferFrameworkFromNodeData(firstTask.data) : null;
 };
 
 const DagCanvas = forwardRef(function DagCanvas(_, ref) {
@@ -613,7 +167,7 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
     [onNodesChange],
   );
 
-  // Función para actualizar layout cuando cambian los nodos o edges
+  // Sincronizar estado visible del canvas sin auto-reordenar nodos
   useEffect(() => {
     if (!isInitializedRef.current) return;
     if (initialNodes.length === 0) {
@@ -623,17 +177,11 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
     }
 
     const sortedNodes = sortNodesWithDAGFirst(initialNodes);
-    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-      sortedNodes,
-      initialEdges,
-      "TB",
-    );
-
-    setNodes(layoutedNodes);
-    setEdges(layoutedEdges);
+    setNodes(sortedNodes);
+    setEdges(initialEdges);
 
     // Validar DAG
-    const validation = validateDAG(layoutedNodes, layoutedEdges);
+    const validation = validateDAG(sortedNodes, initialEdges);
     if (!validation.isValid) {
       setValidationErrors(validation);
       if (validation.hasCycles) {
@@ -785,6 +333,36 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
         return;
       }
 
+      const existingRoot = initialNodes.find(isRootNode);
+      const canvasFramework = getCanvasFramework(initialNodes);
+      const droppedFramework = inferFrameworkFromNodeData(data);
+      const droppedIsRoot = isRootNodeType(data.type);
+
+      // Reglas de negocio: raíz única y no mezclar frameworks
+      if (droppedIsRoot) {
+        if (existingRoot) {
+          showNotification("Solo se permite un nodo DAG/Workflow por diagrama", "error");
+          return;
+        }
+        if (initialNodes.some((n) => !isRootNode(n))) {
+          showNotification("El DAG/Workflow debe crearse antes de agregar tasks", "error");
+          return;
+        }
+        if (canvasFramework && droppedFramework && canvasFramework !== droppedFramework) {
+          showNotification("No se puede mezclar Airflow con Argo en el mismo flujo", "error");
+          return;
+        }
+      } else {
+        if (!existingRoot) {
+          showNotification("Primero agrega el nodo DAG/Workflow al flujo", "error");
+          return;
+        }
+        if (canvasFramework && droppedFramework && canvasFramework !== droppedFramework) {
+          showNotification("La task no corresponde al framework del flujo actual", "error");
+          return;
+        }
+      }
+
       // Obtener posición del drop en coordenadas del flujo
       let dropPosition = { x: 0, y: 0 };
       if (reactFlowInstance.current) {
@@ -799,8 +377,10 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
       const newNodeId = `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       // Generar task_id que será usado como nombre del nodo
       // Usar task_id de los parámetros si está disponible, sino usar label o generar uno
+      const parameterDefinitions = data.parameterDefinitions || data.parameters || {};
+
       const newTaskId =
-        data.parameters?.task_id?.default ||
+        parameterDefinitions?.task_id?.default ||
         data.label ||
         `task_${initialNodes.length + 1}`;
       const newNode = {
@@ -813,12 +393,14 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
           // Mostrar parámetros automáticamente al crear un nuevo nodo
           showParameters: true,
           // Guardar definiciones de parámetros para poder editarlos
-          parameterDefinitions: data.parameters || {},
+          parameterDefinitions,
           // Inicializar parámetros con valores por defecto
-          parameters: data.parameters
-            ? Object.entries(data.parameters).reduce((acc, [key, param]) => {
-                if (param.default !== undefined) {
+          parameters: parameterDefinitions
+            ? Object.entries(parameterDefinitions).reduce((acc, [key, param]) => {
+                if (param && typeof param === "object" && param.default !== undefined) {
                   acc[key] = param.default;
+                } else if (param !== undefined && param !== null && typeof param !== "object") {
+                  acc[key] = param;
                 }
                 return acc;
               }, {})
@@ -834,13 +416,12 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
           },
           onDelete: handleNodeDelete,
         },
-        position: { x: 0, y: 0 },
+        position: { x: dropPosition.x, y: dropPosition.y },
       };
 
       // Detectar zona de drop inteligente
       const dropZoneInfo = findDropZone(dropPosition.y, dropPosition.x);
       let newEdges = initialEdges;
-      const isBranchOperator = data.type === "BranchPythonOperator";
       const isDAG =
         data.type === "DAG" || data.type === "ArgoWorkflow";
 
@@ -1050,13 +631,88 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
           }
         }
       } else if (initialNodes.length > 0 && !isDAG) {
-        // Fallback a conexión automática estándar (también aplica para BranchPythonOperator)
+        // Fallback: si no cae en zona, conectar al final del workflow
         const dagNode = initialNodes.find(
           (node) =>
             node.data?.type === "DAG" || node.data?.type === "ArgoWorkflow"
         );
+        const lastPlacedNode = [...initialNodes]
+          .reverse()
+          .find((node) => !isRootNode(node));
 
-        if (dagNode) {
+        const terminalTask = [...initialNodes]
+          .reverse()
+          .find(
+            (node) =>
+              !isRootNode(node) &&
+              !isBranchNode(node) &&
+              !hasOutgoingEdge(node.id),
+          );
+
+        if (lastPlacedNode && isBranchNode(lastPlacedNode)) {
+          const branchTrueEdge = initialEdges.find(
+            (e) => e.source === lastPlacedNode.id && e.sourceHandle === "true",
+          );
+
+          if (branchTrueEdge) {
+            // Rama true ocupada: insertar en medio por defecto
+            newEdges = initialEdges
+              .filter((e) => e.id !== branchTrueEdge.id)
+              .concat([
+                {
+                  id: `e${lastPlacedNode.id}-true-${newNodeId}`,
+                  source: lastPlacedNode.id,
+                  sourceHandle: "true",
+                  target: newNodeId,
+                  type: "smoothstep",
+                  animated: true,
+                  style: { stroke: "#22c55e", strokeWidth: 2 },
+                  markerEnd: { type: MarkerType.ArrowClosed, color: "#22c55e" },
+                },
+                {
+                  id: `e${newNodeId}-${branchTrueEdge.target}`,
+                  source: newNodeId,
+                  target: branchTrueEdge.target,
+                  type: "smoothstep",
+                  animated: true,
+                  style: { stroke: "#64748b", strokeWidth: 2 },
+                  markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+                },
+              ]);
+          } else {
+            // Rama true libre: conectar por defecto en true
+            newEdges = [
+              ...initialEdges,
+              {
+                id: `e${lastPlacedNode.id}-true-${newNodeId}`,
+                source: lastPlacedNode.id,
+                sourceHandle: "true",
+                target: newNodeId,
+                type: "smoothstep",
+                animated: true,
+                style: { stroke: "#22c55e", strokeWidth: 2 },
+                markerEnd: { type: MarkerType.ArrowClosed, color: "#22c55e" },
+              },
+            ];
+          }
+        } else if (terminalTask) {
+          newEdges = [
+            ...initialEdges,
+            {
+              id: `e${terminalTask.id}-${newNodeId}`,
+              source: terminalTask.id,
+              target: newNodeId,
+              type: "smoothstep",
+              animated: true,
+              style: { stroke: "#64748b", strokeWidth: 2 },
+              markerEnd: {
+                type: MarkerType.ArrowClosed,
+                color: "#64748b",
+              },
+            },
+          ];
+        } else if (dagNode && !hasIncomingEdge(newNodeId)) {
+          // Primer task después del nodo raíz
           newEdges = [
             ...initialEdges,
             {
@@ -1072,30 +728,6 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
               },
             },
           ];
-        } else {
-          const lastNodeWithoutConnection = [...initialNodes]
-            .reverse()
-            .find(
-              (node) => !hasOutgoingEdge(node.id) && node.data?.type !== "DAG",
-            );
-
-          if (lastNodeWithoutConnection) {
-            newEdges = [
-              ...initialEdges,
-              {
-                id: `e${lastNodeWithoutConnection.id}-${newNodeId}`,
-                source: lastNodeWithoutConnection.id,
-                target: newNodeId,
-                type: "smoothstep",
-                animated: true,
-                style: { stroke: "#64748b", strokeWidth: 2 },
-                markerEnd: {
-                  type: MarkerType.ArrowClosed,
-                  color: "#64748b",
-                },
-              },
-            ];
-          }
         }
       }
 
@@ -1110,6 +742,8 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
       initialEdges,
       handleNodeDelete,
       findDropZone,
+      hasOutgoingEdge,
+      hasIncomingEdge,
       showNotification,
     ],
   );
@@ -1124,6 +758,8 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
 
       const sourceNode = initialNodes.find((n) => n.id === params.source);
       const targetNode = initialNodes.find((n) => n.id === params.target);
+      const sourceFramework = inferFrameworkFromNodeData(sourceNode?.data);
+      const targetFramework = inferFrameworkFromNodeData(targetNode?.data);
       const isDAGTarget =
         targetNode?.data?.type === "DAG" ||
         targetNode?.data?.type === "ArgoWorkflow";
@@ -1141,22 +777,43 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
         sourceNode?.data?.type === "ArgoWorkflow";
       const isBranch = sourceNode?.data?.type === "BranchPythonOperator";
 
-      setInitialEdges((prev) => {
-        let filtered = prev.filter(
-          (e) => !(e.target === params.target && e.source !== params.source),
-        );
+      if (
+        sourceFramework &&
+        targetFramework &&
+        sourceFramework !== targetFramework
+      ) {
+        showNotification("No se pueden conectar nodos de frameworks distintos", "error");
+        return;
+      }
 
-        if (!isDAGSource && !isBranch) {
-          filtered = filtered.filter(
-            (e) => !(e.source === params.source && e.target !== params.target),
-          );
+      setInitialEdges((prev) => {
+        const sameHandleExists = prev.some(
+          (e) =>
+            e.source === params.source &&
+            (e.sourceHandle || "") === (params.sourceHandle || ""),
+        );
+        if (isBranch && sameHandleExists) {
+          showNotification("Cada rama (true/false) solo puede tener una conexión", "error");
+          return prev;
         }
 
-        const exists = filtered.some(
+        const sourceHasOutgoing = prev.some((e) => e.source === params.source);
+        if (!isDAGSource && !isBranch && sourceHasOutgoing) {
+          showNotification("Esta task ya tiene una conexión de salida", "error");
+          return prev;
+        }
+
+        const targetHasIncoming = prev.some((e) => e.target === params.target);
+        if (targetHasIncoming) {
+          showNotification("Esta task ya tiene una conexión de entrada", "error");
+          return prev;
+        }
+
+        const exists = prev.some(
           (e) => e.source === params.source && e.target === params.target,
         );
 
-        if (exists) return filtered;
+        if (exists) return prev;
 
         const newEdge = {
           ...params,
@@ -1173,7 +830,7 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
           },
         };
 
-        return addEdge(newEdge, filtered);
+        return addEdge(newEdge, prev);
       });
 
       showNotification("Conexión creada", "success");
@@ -1323,7 +980,7 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
                 );
                 return prev;
               }
-              newEdges = reconnectBelow(node.id, targetNode, newEdges, nodes);
+              newEdges = reconnectBelow(node.id, targetNode, newEdges);
             } else if (
               dropZonePreview.zone === "branch-true" ||
               dropZonePreview.zone === "branch-false"
@@ -1345,6 +1002,150 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
 
           showNotification("Nodo reubicado correctamente", "success");
         }
+      } else {
+        // Si no cae en zona válida:
+        // - Nodos con edges: no reordenar automáticamente (solo dropzones válidas)
+        // - Nodos sin edges: aplicar fallback al final del flujo
+        setInitialEdges((prev) => {
+          const nodeHasAnyEdge = prev.some(
+            (e) => e.source === node.id || e.target === node.id,
+          );
+
+          if (nodeHasAnyEdge) {
+            showNotification(
+              "Nodo conectado: usa una zona válida (antes/después/rama) para reordenar",
+              "warning",
+            );
+            return prev;
+          }
+
+          let newEdges = cleanupMovedNodeConnections(node.id, prev);
+          const lastPlacedNode = [...nodes]
+            .filter((n) => n.id !== node.id && !isRootNode(n))
+            .reverse()
+            .find(() => true);
+
+          const terminalTask = [...nodes]
+            .filter((n) => n.id !== node.id && !isRootNode(n) && !isBranchNode(n))
+            .reverse()
+            .find((n) => !newEdges.some((e) => e.source === n.id));
+
+          if (lastPlacedNode && isBranchNode(lastPlacedNode)) {
+            const branchTrueEdge = newEdges.find(
+              (e) => e.source === lastPlacedNode.id && e.sourceHandle === "true",
+            );
+
+            if (
+              branchTrueEdge &&
+              branchTrueEdge.target !== node.id &&
+              !wouldCreateCycle(lastPlacedNode.id, node.id, newEdges) &&
+              !wouldCreateCycle(node.id, branchTrueEdge.target, newEdges)
+            ) {
+              newEdges = newEdges
+                .filter((e) => e.id !== branchTrueEdge.id)
+                .concat([
+                  {
+                    id: `e${lastPlacedNode.id}-true-${node.id}`,
+                    source: lastPlacedNode.id,
+                    sourceHandle: "true",
+                    target: node.id,
+                    type: "smoothstep",
+                    animated: true,
+                    style: { stroke: "#22c55e", strokeWidth: 2 },
+                    markerEnd: { type: MarkerType.ArrowClosed, color: "#22c55e" },
+                  },
+                  {
+                    id: `e${node.id}-${branchTrueEdge.target}`,
+                    source: node.id,
+                    target: branchTrueEdge.target,
+                    type: "smoothstep",
+                    animated: true,
+                    style: { stroke: "#64748b", strokeWidth: 2 },
+                    markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+                  },
+                ]);
+            } else if (
+              !branchTrueEdge &&
+              !wouldCreateCycle(lastPlacedNode.id, node.id, newEdges)
+            ) {
+              newEdges = [
+                ...newEdges,
+                {
+                  id: `e${lastPlacedNode.id}-true-${node.id}`,
+                  source: lastPlacedNode.id,
+                  sourceHandle: "true",
+                  target: node.id,
+                  type: "smoothstep",
+                  animated: true,
+                  style: { stroke: "#22c55e", strokeWidth: 2 },
+                  markerEnd: { type: MarkerType.ArrowClosed, color: "#22c55e" },
+                },
+              ];
+            }
+          } else if (
+            terminalTask &&
+            !wouldCreateCycle(terminalTask.id, node.id, newEdges)
+          ) {
+            newEdges = [
+              ...newEdges,
+              {
+                id: `e${terminalTask.id}-${node.id}`,
+                source: terminalTask.id,
+                target: node.id,
+                type: "smoothstep",
+                animated: true,
+                style: { stroke: "#64748b", strokeWidth: 2 },
+                markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+              },
+            ];
+          } else {
+            // Caso borde: si no hay task terminal disponible, volver a enlazar desde la raíz
+            const rootNode = nodes.find((n) => isRootNode(n));
+            const alreadyHasIncoming = newEdges.some((e) => e.target === node.id);
+            if (
+              rootNode &&
+              !alreadyHasIncoming &&
+              !wouldCreateCycle(rootNode.id, node.id, newEdges)
+            ) {
+              newEdges = [
+                ...newEdges,
+                {
+                  id: `e${rootNode.id}-${node.id}`,
+                  source: rootNode.id,
+                  target: node.id,
+                  type: "smoothstep",
+                  animated: true,
+                  style: { stroke: "#6366f1", strokeWidth: 2 },
+                  markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
+                },
+              ];
+            }
+          }
+
+          // Garantía final: no dejar el nodo sin conexión de entrada
+          if (!newEdges.some((e) => e.target === node.id)) {
+            const rootNode = nodes.find((n) => isRootNode(n));
+            if (
+              rootNode &&
+              !wouldCreateCycle(rootNode.id, node.id, newEdges)
+            ) {
+              newEdges = [
+                ...newEdges,
+                {
+                  id: `e${rootNode.id}-${node.id}`,
+                  source: rootNode.id,
+                  target: node.id,
+                  type: "smoothstep",
+                  animated: true,
+                  style: { stroke: "#6366f1", strokeWidth: 2 },
+                  markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
+                },
+              ];
+            }
+          }
+
+          return newEdges;
+        });
       }
 
       setIsNodeDragging(false);
@@ -1356,38 +1157,67 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
 
   // Función para autoajustar el layout
   const handleAutoLayout = useCallback(() => {
-    if (!nodes.length) return;
+    if (!initialNodes.length) return;
 
     const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(
-      nodes,
-      edges,
+      sortNodesWithDAGFirst(initialNodes),
+      initialEdges,
       "TB",
     );
 
+    setInitialNodes(layouted);
+    setInitialEdges(layoutedEdges);
     setNodes(layouted);
     setEdges(layoutedEdges);
+    requestAnimationFrame(() => {
+      reactFlowInstance.current?.fitView({ padding: 0.2, duration: 300 });
+    });
     showNotification("Layout ajustado", "success");
-  }, [nodes, edges, setNodes, setEdges, showNotification]);
+  }, [initialNodes, initialEdges, setNodes, setEdges, showNotification]);
 
   const expandAllParameters = useCallback(() => {
-    setInitialNodes((prev) =>
-      prev.map((n) => ({
-        ...n,
-        data: { ...n.data, showParameters: true },
-      }))
+    const nextNodes = initialNodes.map((n) => ({
+      ...n,
+      data: { ...n.data, showParameters: true },
+    }));
+
+    const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(
+      sortNodesWithDAGFirst(nextNodes),
+      initialEdges,
+      "TB",
     );
+
+    setInitialNodes(layouted);
+    setInitialEdges(layoutedEdges);
+    setNodes(layouted);
+    setEdges(layoutedEdges);
+    requestAnimationFrame(() => {
+      reactFlowInstance.current?.fitView({ padding: 0.2, duration: 250 });
+    });
     showNotification("Parámetros expandidos", "success");
-  }, [showNotification]);
+  }, [initialNodes, initialEdges, setNodes, setEdges, showNotification]);
 
   const collapseAllParameters = useCallback(() => {
-    setInitialNodes((prev) =>
-      prev.map((n) => ({
-        ...n,
-        data: { ...n.data, showParameters: false },
-      }))
+    const nextNodes = initialNodes.map((n) => ({
+      ...n,
+      data: { ...n.data, showParameters: false },
+    }));
+
+    const { nodes: layouted, edges: layoutedEdges } = getLayoutedElements(
+      sortNodesWithDAGFirst(nextNodes),
+      initialEdges,
+      "TB",
     );
+
+    setInitialNodes(layouted);
+    setInitialEdges(layoutedEdges);
+    setNodes(layouted);
+    setEdges(layoutedEdges);
+    requestAnimationFrame(() => {
+      reactFlowInstance.current?.fitView({ padding: 0.2, duration: 250 });
+    });
     showNotification("Parámetros contraídos", "success");
-  }, [showNotification]);
+  }, [initialNodes, initialEdges, setNodes, setEdges, showNotification]);
 
   // Usar initialNodes.length para el contador en lugar de nodes.length
   // porque nodes puede estar desactualizado durante el cálculo del layout
@@ -1461,14 +1291,14 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
         </div>
       )}
       {/* Header informativo (z-20 para quedar siempre encima del canvas y no bloquear clics) */}
-      <div className="flex-shrink-0 relative z-20 bg-white/80 backdrop-blur-sm border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+      <div className="flex-shrink-0 relative z-20 bg-white/80 backdrop-blur-sm border-b border-gray-200 px-3 sm:px-4 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-slate-700">DAG Builder</h3>
           <p className="text-xs text-slate-500">
             Arrastra bloques para crear tu DAG
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {nodeCount > 0 && (
             <>
               <button
@@ -1542,7 +1372,6 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
             nodeTypes={nodeTypes}
             connectionLineStyle={connectionLineStyle}
             defaultEdgeOptions={defaultEdgeOptions}
-            fitView
             attributionPosition="bottom-left"
             minZoom={0.1}
             maxZoom={2}

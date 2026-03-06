@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from firebase_admin import auth
+import os
 from config.firebase import create_jwt_token, create_user_document, get_user_profile, verify_jwt_token
 from middleware.auth import require_auth
 
@@ -72,7 +73,9 @@ def login():
         # Necesitamos usar la REST API de Firebase
         import requests
         
-        firebase_api_key = "TU_WEB_API_KEY"  # Debes agregarlo al .env
+        firebase_api_key = os.getenv("FIREBASE_WEB_API_KEY")
+        if not firebase_api_key:
+            return jsonify({'error': 'FIREBASE_WEB_API_KEY no configurado en el backend'}), 500
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={firebase_api_key}"
         
         payload = {

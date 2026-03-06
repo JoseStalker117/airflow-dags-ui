@@ -19,6 +19,8 @@ export default function Home() {
   
   const [isResizing, setIsResizing] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(() => window.innerWidth < 1024);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(() => window.innerWidth >= 1024);
 
   // ============== HELPERS ==============
   
@@ -305,12 +307,26 @@ Desarrollado con ❤️`);
     saveUserPreferences({ paletteWidth });
   }, [paletteWidth]);
 
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 1024;
+      setIsMobileLayout(mobile);
+      if (!mobile) {
+        setIsPaletteOpen(true);
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   // ============== REDIMENSIONAMIENTO ==============
   
   const handleMouseDown = useCallback((e) => {
+    if (isMobileLayout) return;
     e.preventDefault();
     setIsResizing(true);
-  }, []);
+  }, [isMobileLayout]);
 
   useEffect(() => {
     const handleMouseMove = (e) => {
@@ -367,10 +383,10 @@ Desarrollado con ❤️`);
             animate={{ opacity: 1, y: 20, scale: 1 }}
             exit={{ opacity: 0, y: -50, scale: 0.9 }}
             transition={{ type: "spring", damping: 20, stiffness: 300 }}
-            className="fixed top-0 right-4 z-[100] pointer-events-none"
+            className="fixed top-0 right-3 sm:right-4 z-[100] pointer-events-none"
           >
             <div className={`
-              px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 min-w-[300px]
+              px-4 sm:px-6 py-3 rounded-lg shadow-2xl flex items-center gap-3 min-w-[240px] max-w-[92vw] sm:min-w-[300px]
               ${notification.type === 'error' 
                 ? 'bg-red-500 text-white' 
                 : notification.type === 'warning'
@@ -397,27 +413,66 @@ Desarrollado con ❤️`);
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden relative">
-        {/* BlockPalette con ancho dinámico */}
-        <div 
-          ref={paletteRef}
-          style={{ width: `${paletteWidth}px`, minWidth: "200px", maxWidth: "600px" }}
-          className="flex-shrink-0 h-full"
-        >
-          <BlockPalette />
-        </div>
+        {isMobileLayout && (
+          <button
+            type="button"
+            onClick={() => setIsPaletteOpen((prev) => !prev)}
+            className="absolute top-3 left-3 z-[60] bg-white border border-gray-200 shadow-md rounded-md px-3 py-1.5 text-xs font-medium text-slate-700"
+          >
+            {isPaletteOpen ? "Ocultar bloques" : "Mostrar bloques"}
+          </button>
+        )}
 
-        {/* Divisor resizable */}
-        <div
-          onMouseDown={handleMouseDown}
-          className={`w-1 bg-gray-300 hover:bg-blue-500 cursor-col-resize flex-shrink-0 transition-colors ${
-            isResizing ? "bg-blue-600" : ""
-          }`}
-          style={{ userSelect: "none" }}
-        >
-          <div className="w-full h-full flex items-center justify-center">
-            <div className="w-0.5 h-8 bg-gray-400 rounded-full"></div>
-          </div>
-        </div>
+        {!isMobileLayout && (
+          <>
+            {/* BlockPalette con ancho dinámico */}
+            <div
+              ref={paletteRef}
+              style={{ width: `${paletteWidth}px`, minWidth: "200px", maxWidth: "600px" }}
+              className="flex-shrink-0 h-full"
+            >
+              <BlockPalette />
+            </div>
+
+            {/* Divisor resizable */}
+            <div
+              onMouseDown={handleMouseDown}
+              className={`w-1 bg-gray-300 hover:bg-blue-500 cursor-col-resize flex-shrink-0 transition-colors ${
+                isResizing ? "bg-blue-600" : ""
+              }`}
+              style={{ userSelect: "none" }}
+            >
+              <div className="w-full h-full flex items-center justify-center">
+                <div className="w-0.5 h-8 bg-gray-400 rounded-full"></div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {isMobileLayout && (
+          <AnimatePresence>
+            {isPaletteOpen && (
+              <>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-slate-900/40 z-40"
+                  onClick={() => setIsPaletteOpen(false)}
+                />
+                <motion.div
+                  initial={{ x: -360 }}
+                  animate={{ x: 0 }}
+                  exit={{ x: -360 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                  className="absolute left-0 top-0 bottom-0 z-50 w-[85vw] max-w-[360px] shadow-2xl"
+                >
+                  <BlockPalette />
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        )}
 
         {/* DagCanvas - ocupa el resto del espacio */}
         <div className="flex-1 min-w-0">
