@@ -1,3 +1,4 @@
+import json
 import os, jwt
 from datetime import datetime, timedelta
 import firebase_admin
@@ -10,20 +11,33 @@ load_dotenv()
 # Base del proyecto (backend/)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-raw_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
-if not raw_path:
-    raise RuntimeError("FIREBASE_CREDENTIALS_PATH no está definido")
+# Opcion 1 (recomendada en Render): JSON completo en variable de entorno
+raw_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
 
-cred_path = Path(raw_path)
+if raw_json:
+    try:
+        cred_info = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("FIREBASE_CREDENTIALS_JSON no es un JSON valido") from exc
+    cred = credentials.Certificate(cred_info)
+else:
+    # Opcion 2: ruta a archivo local
+    raw_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+    if not raw_path:
+        raise RuntimeError(
+            "Define FIREBASE_CREDENTIALS_JSON o FIREBASE_CREDENTIALS_PATH"
+        )
 
-# Si viene como relativa (./...), resolverla contra BASE_DIR
-if not cred_path.is_absolute():
-    cred_path = BASE_DIR / cred_path
+    cred_path = Path(raw_path)
 
-if not cred_path.exists():
-    raise FileNotFoundError(f"No se encontró el archivo Firebase: {cred_path}")
+    # Si viene como relativa (./...), resolverla contra BASE_DIR
+    if not cred_path.is_absolute():
+        cred_path = BASE_DIR / cred_path
 
-cred = credentials.Certificate(str(cred_path))
+    if not cred_path.exists():
+        raise FileNotFoundError(f"No se encontró el archivo Firebase: {cred_path}")
+
+    cred = credentials.Certificate(str(cred_path))
 firebase_admin.initialize_app(cred)
 
 # Cliente de Firestore
