@@ -61,7 +61,7 @@ def register():
 def login():
     """Login con email y contraseña"""
     try:
-        data = request.json
+        data = request.get_json(silent=True) or {}
         email = data.get('email')
         password = data.get('password')
         
@@ -102,6 +102,8 @@ def login():
                 'USER_DISABLED': ('Usuario deshabilitado', 403),
                 'INVALID_API_KEY': ('FIREBASE_WEB_API_KEY inválida', 500),
                 'PROJECT_NOT_FOUND': ('Proyecto Firebase no encontrado (revisa FIREBASE_WEB_API_KEY)', 500),
+                'API_KEY_SERVICE_BLOCKED': ('FIREBASE_WEB_API_KEY bloqueada para Identity Toolkit', 500),
+                'OPERATION_NOT_ALLOWED': ('Proveedor Email/Password no habilitado en Firebase Auth', 500),
             }
             message, status = error_map.get(firebase_error, ('Error autenticando con Firebase', 401))
             return jsonify({'error': message, 'firebaseError': firebase_error}), status
@@ -111,6 +113,11 @@ def login():
         
         # Crear o actualizar documento en Firestore
         user_data = create_user_document(uid, email, is_anonymous=False)
+        if not user_data:
+            user_data = {
+                'displayName': email.split('@')[0] if email else 'Usuario',
+                'admin': False
+            }
         
         # Generar JWT propio
         token = create_jwt_token(
@@ -133,7 +140,7 @@ def login():
         
     except Exception as e:
         print(f"Error en login: {e}")
-        return jsonify({'error': 'Error al iniciar sesión'}), 500
+        return jsonify({'error': 'Error al iniciar sesión', 'detail': str(e)}), 500
 
 @auth_bp.route('/login/anonymous', methods=['POST'])
 def login_anonymous():
