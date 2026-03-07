@@ -1,5 +1,10 @@
 import { Handle, Position } from "reactflow";
 import { useState, useEffect } from "react";
+import {
+  getOperatorNodeStyle,
+  NODE_COLOR_CLASSES,
+  NODE_BORDER_COLOR_CLASSES,
+} from "../config/taskUiConfig";
 
 /**
  * Nodo personalizado para el canvas de React Flow
@@ -32,74 +37,7 @@ export default function DagFlowNode({ data }) {
     }
   }, [data.task_id, localParameters.task_id]);
 
-  // Obtener icono y color según el tipo de operador (igual que TaskNode)
-  const getOperatorInfo = (type) => {
-    const operatorStyles = {
-      DAG: { icon: "account_tree", color: "indigo" },
-      ArgoWorkflow: { icon: "hub", color: "violet" },
-      BashOperator: { icon: "terminal", color: "emerald" },
-      PythonOperator: { icon: "code", color: "blue" },
-      PythonVirtualenvOperator: { icon: "workspace", color: "indigo" },
-      PostgresOperator: { icon: "storage", color: "cyan" },
-      BigQueryOperator: { icon: "cloud", color: "purple" },
-      SQLExecuteQueryOperator: { icon: "database", color: "teal" },
-      LocalFilesystemToS3Operator: { icon: "upload_file", color: "orange" },
-      S3ToS3Operator: { icon: "file_copy", color: "amber" },
-      SFTPOperator: { icon: "cloud_sync", color: "sky" },
-      GCSToBigQueryOperator: { icon: "cloud_upload", color: "violet" },
-      FileSensor: { icon: "sensors", color: "pink" },
-      S3KeySensor: { icon: "cloud_done", color: "rose" },
-      SqlSensor: { icon: "data_check", color: "green" },
-      HttpSensor: { icon: "http", color: "red" },
-      DummyOperator: { icon: "radio_button_unchecked", color: "gray" },
-      BranchPythonOperator: { icon: "call_split", color: "yellow" },
-      ShortCircuitOperator: { icon: "electric_bolt", color: "amber" },
-    };
-
-    return operatorStyles[type] || { icon: "widgets", color: "slate" };
-  };
-
-  const operatorInfo = getOperatorInfo(data.type);
-
-  const colorClasses = {
-    emerald: "bg-emerald-500",
-    blue: "bg-blue-500",
-    indigo: "bg-indigo-500",
-    cyan: "bg-cyan-500",
-    purple: "bg-purple-500",
-    teal: "bg-teal-500",
-    orange: "bg-orange-500",
-    amber: "bg-amber-500",
-    sky: "bg-sky-500",
-    violet: "bg-violet-500",
-    pink: "bg-pink-500",
-    rose: "bg-rose-500",
-    green: "bg-green-500",
-    red: "bg-red-500",
-    gray: "bg-gray-500",
-    yellow: "bg-yellow-500",
-    slate: "bg-slate-500",
-  };
-
-  const borderColorClasses = {
-    emerald: "border-emerald-300",
-    blue: "border-blue-300",
-    indigo: "border-indigo-300",
-    cyan: "border-cyan-300",
-    purple: "border-purple-300",
-    teal: "border-teal-300",
-    orange: "border-orange-300",
-    amber: "border-amber-300",
-    sky: "border-sky-300",
-    violet: "border-violet-300",
-    pink: "border-pink-300",
-    rose: "border-rose-300",
-    green: "border-green-300",
-    red: "border-red-300",
-    gray: "border-gray-300",
-    yellow: "border-yellow-300",
-    slate: "border-slate-300",
-  };
+  const operatorInfo = getOperatorNodeStyle(data.type);
 
   const paramCount = localParameters
     ? Object.keys(localParameters).filter(
@@ -325,7 +263,7 @@ export default function DagFlowNode({ data }) {
 
   return (
     <div
-      className={`bg-white rounded-lg shadow-lg border-2 ${borderColorClasses[operatorInfo.color]} 
+      className={`bg-white rounded-lg shadow-lg border-2 ${NODE_BORDER_COLOR_CLASSES[operatorInfo.color]} 
                     hover:shadow-xl transition-all ${isDAG ? "min-w-[280px] sm:min-w-[400px] md:min-w-[500px]" : "min-w-[280px]"}
                     ${isDAG ? "bg-gradient-to-br from-indigo-50 to-purple-50" : ""}
                     ${isDAG ? "w-full max-w-full" : ""}`}
@@ -348,7 +286,7 @@ export default function DagFlowNode({ data }) {
             <div className="border-b-2 border-indigo-200 pb-3 mb-3">
               <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-3">
                 <div
-                  className={`${colorClasses[operatorInfo.color]} rounded-lg p-2 flex-shrink-0 self-start`}
+                  className={`${NODE_COLOR_CLASSES[operatorInfo.color]} rounded-lg p-2 flex-shrink-0 self-start`}
                 >
                   <span className="material-symbols-outlined text-white text-base sm:text-lg">
                     {operatorInfo.icon}
@@ -410,7 +348,7 @@ export default function DagFlowNode({ data }) {
             <div className="flex items-start gap-2">
               {/* Icono del operador */}
               <div
-                className={`${colorClasses[operatorInfo.color]} rounded-lg p-1.5 flex-shrink-0`}
+                className={`${NODE_COLOR_CLASSES[operatorInfo.color]} rounded-lg p-1.5 flex-shrink-0`}
               >
                 <span className="material-symbols-outlined text-white text-sm">
                   {operatorInfo.icon}

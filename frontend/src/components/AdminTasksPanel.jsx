@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { taskAPI } from "../services/api";
+import {
+  ICON_OPTIONS,
+  CATEGORY_CARD_STYLES,
+  FRAMEWORK_OPTIONS,
+  CATEGORY_OPTIONS,
+  CATEGORY_LABELS,
+} from "../config/taskUiConfig";
 
 const REQUIRED_FIELDS = [
   "id",
@@ -60,42 +67,6 @@ const FIELD_CONFIG = {
     hint: "Nombre interno del template.",
     placeholder: "bash_operator",
   },
-};
-
-const ICON_OPTIONS = [
-  "extension",
-  "account_tree",
-  "terminal",
-  "code",
-  "database",
-  "storage",
-  "cloud",
-  "hub",
-  "sensors",
-  "schedule",
-  "swap_horiz",
-  "api",
-  "build",
-  "settings",
-  "task",
-  "description",
-  "integration_instructions",
-  "data_object",
-  "tune",
-  "route",
-];
-
-const CATEGORY_COLOR_STYLES = {
-  util: "border-l-emerald-500 bg-emerald-50/35",
-  airflow: "border-l-blue-500 bg-blue-50/35",
-  argo: "border-l-indigo-500 bg-indigo-50/35",
-  python: "border-l-violet-500 bg-violet-50/35",
-  sql: "border-l-cyan-500 bg-cyan-50/35",
-  database: "border-l-teal-500 bg-teal-50/35",
-  transfer: "border-l-orange-500 bg-orange-50/35",
-  sensors: "border-l-pink-500 bg-pink-50/35",
-  google_cloud: "border-l-sky-500 bg-sky-50/35",
-  others: "border-l-slate-500 bg-slate-50/50",
 };
 
 const defaultTask = {
@@ -234,18 +205,16 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
     setLoading(true);
     setError(null);
     try {
-      const params = {};
-      if (frameworkFilter !== "all") {
-        params.framework = frameworkFilter;
-      }
-      const { data } = await taskAPI.getAllAdmin({ params });
+      // Cargar una sola vez todas las tasks (activas/inactivas) y filtrar localmente
+      // para reducir consumo de lecturas en Firestore.
+      const { data } = await taskAPI.getAllAdmin();
       setTasks(Array.isArray(data) ? data : []);
     } catch (err) {
       setError(err.response?.data?.error || err.message || "No se pudieron cargar las tasks");
     } finally {
       setLoading(false);
     }
-  }, [frameworkFilter]);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -255,6 +224,7 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
   const filteredTasks = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
     const filtered = tasks.filter((task) => {
+      if (frameworkFilter !== "all" && String(task.framework || "") !== frameworkFilter) return false;
       if (statusFilter === "active" && task.isActive === false) return false;
       if (statusFilter === "inactive" && task.isActive !== false) return false;
       if (categoryFilter !== "all" && String(task.category || "") !== categoryFilter) return false;
@@ -274,7 +244,7 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
     });
 
     return [...filtered].sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
-  }, [tasks, searchTerm, statusFilter, categoryFilter]);
+  }, [tasks, searchTerm, frameworkFilter, statusFilter, categoryFilter]);
 
   const stats = useMemo(() => {
     const total = tasks.length;
@@ -375,9 +345,15 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
   };
 
   const categoryOptions = useMemo(() => {
-    return [...new Set(tasks.map((t) => t.category).filter(Boolean))].sort((a, b) =>
-      String(a).localeCompare(String(b)),
+    const dynamic = [...new Set(tasks.map((t) => t.category).filter(Boolean))].map((value) => ({
+      value,
+      label: CATEGORY_LABELS[value] || value,
+    }));
+    const merged = [...CATEGORY_OPTIONS, ...dynamic];
+    const unique = merged.filter(
+      (option, index, arr) => arr.findIndex((item) => item.value === option.value) === index,
     );
+    return unique.sort((a, b) => String(a.label).localeCompare(String(b.label)));
   }, [tasks]);
 
   return (
@@ -438,8 +414,11 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                             title="Filtrar por framework"
                           >
                             <option value="all">Framework</option>
-                            <option value="airflow">Airflow</option>
-                            <option value="argo">Argo</option>
+                            {FRAMEWORK_OPTIONS.map((framework) => (
+                              <option key={framework.value} value={framework.value}>
+                                {framework.label}
+                              </option>
+                            ))}
                           </select>
                         </div>
 
@@ -466,8 +445,8 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                           >
                             <option value="all">Categoría</option>
                             {categoryOptions.map((category) => (
-                              <option key={category} value={category}>
-                                {category}
+                              <option key={category.value} value={category.value}>
+                                {category.label}
                               </option>
                             ))}
                           </select>
@@ -533,7 +512,7 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                               ? "border-blue-300 bg-blue-50"
                               : "border-slate-200 hover:bg-slate-100"
                           } border-l-4 ${
-                            CATEGORY_COLOR_STYLES[task.category] || CATEGORY_COLOR_STYLES.others
+                            CATEGORY_CARD_STYLES[task.category] || CATEGORY_CARD_STYLES.others
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -541,7 +520,7 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                               <p className="text-sm font-semibold text-slate-900 truncate">{task.id}</p>
                               <p className="text-xs text-slate-600 truncate">{task.name}</p>
                               <p className="text-[11px] text-slate-500 truncate">
-                                {task.framework} · {task.category} · {task.type}
+                                {task.framework} · {CATEGORY_LABELS[task.category] || task.category} · {task.type}
                               </p>
                             </div>
                             <span
@@ -619,12 +598,17 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                         <label className="text-sm text-slate-700">
                           <span className="font-medium">{FIELD_CONFIG.category.label} <span className="text-rose-500">*</span></span>
                           <p className="text-xs text-slate-500 mt-0.5">{FIELD_CONFIG.category.hint}</p>
-                          <input
+                          <select
                             value={form.category || ""}
                             onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
-                            placeholder={FIELD_CONFIG.category.placeholder}
                             className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                          />
+                          >
+                            {categoryOptions.map((category) => (
+                              <option key={`form-${category.value}`} value={category.value}>
+                                {category.label}
+                              </option>
+                            ))}
+                          </select>
                         </label>
 
                         <label className="text-sm text-slate-700">
@@ -641,8 +625,11 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                             }
                             className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
                           >
-                            <option value="airflow">airflow</option>
-                            <option value="argo">argo</option>
+                            {FRAMEWORK_OPTIONS.map((framework) => (
+                              <option key={`form-${framework.value}`} value={framework.value}>
+                                {framework.value}
+                              </option>
+                            ))}
                           </select>
                         </label>
 

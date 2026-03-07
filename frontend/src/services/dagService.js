@@ -407,7 +407,7 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
     .map((callableName) => `def ${callableName}(**context):\n    """TODO: Implementar lógica para ${callableName}"""\n    pass\n`);
 
   const pythonCode = `"""
-DAG exportado desde DAG Builder
+DAG exportado desde DAGGER v1.0.0
 Compatible con Apache Airflow 2.4.0
 Generado: ${new Date().toLocaleString('es-MX')}
 """

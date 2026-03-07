@@ -1293,7 +1293,7 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
       {/* Header informativo (z-20 para quedar siempre encima del canvas y no bloquear clics) */}
       <div className="flex-shrink-0 relative z-20 bg-white/80 backdrop-blur-sm border-b border-gray-200 px-3 sm:px-4 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-700">DAG Builder</h3>
+          <h3 className="text-sm font-semibold text-slate-700">DAGGER</h3>
           <p className="text-xs text-slate-500">
             Arrastra bloques para crear tu DAG
           </p>

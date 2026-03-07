@@ -6,6 +6,8 @@
 import { taskAPI } from './api';
 
 const FRAMEWORKS = ['airflow', 'argo'];
+const TASKS_CACHE_TTL_MS = 60 * 1000 * 10; // 60s
+const tasksCache = new Map();
 
 /**
  * Convierte un documento de task de Firestore al formato de bloque del palette/canvas.
@@ -40,10 +42,25 @@ export function taskDocToBlock(doc) {
  * @param {string} [framework] - 'airflow' | 'argo' para filtrar
  * @returns {Promise<Object[]>} array de bloques en formato palette
  */
-export async function fetchTaskBlocks(framework = null) {
+export async function fetchTaskBlocks(framework = null, options = {}) {
+  const { forceRefresh = false } = options;
+  const cacheKey = framework && FRAMEWORKS.includes(framework) ? framework : 'all';
+  const now = Date.now();
+  const cached = tasksCache.get(cacheKey);
+
+  if (!forceRefresh && cached && cached.expiresAt > now) {
+    return cached.data;
+  }
+
   const config = framework && FRAMEWORKS.includes(framework) ? { params: { framework } } : {};
   const { data } = await taskAPI.getAll(config);
-  return Array.isArray(data) ? data.map(taskDocToBlock) : [];
+  const mapped = Array.isArray(data) ? data.map(taskDocToBlock) : [];
+  tasksCache.set(cacheKey, { data: mapped, expiresAt: now + TASKS_CACHE_TTL_MS });
+  return mapped;
+}
+
+export function invalidateTaskBlocksCache() {
+  tasksCache.clear();
 }
 
 /**

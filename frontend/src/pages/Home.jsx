@@ -237,7 +237,9 @@ export default function Home() {
           break;
 
         case "showAbout":
-          alert(`DAG Builder v1.0
+          alert(`
+
+DAGGER v1.0.0
           
 📊 Creado con React Flow
 🔧 Gestión visual de DAGs para Apache Airflow
@@ -246,8 +248,7 @@ Estado actual:
   • Nodos: ${nodes.length}
   • Conexiones: ${edges.length}
   • Operaciones registradas: ${dagLogger.getLogs().length}
-
-Desarrollado con ❤️`);
+`);
           break;
 
         case "openTaskAdmin":
