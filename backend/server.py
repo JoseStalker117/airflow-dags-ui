@@ -28,6 +28,27 @@ def main():
 def health_check():
     return {'status': 'ok'}, 200
 
+# Alias legacy/cortos para auth bajo /api/*
+@app.route('/api/login', methods=['GET', 'POST', 'OPTIONS'])
+def api_login_alias():
+    return redirect('/api/auth/login', code=307)
+
+@app.route('/api/login/anonymous', methods=['POST', 'OPTIONS'])
+def api_login_anonymous_alias():
+    return redirect('/api/auth/login/anonymous', code=307)
+
+@app.route('/api/register', methods=['POST', 'OPTIONS'])
+def api_register_alias():
+    return redirect('/api/auth/register', code=307)
+
+@app.route('/api/me', methods=['GET', 'OPTIONS'])
+def api_me_alias():
+    return redirect('/api/auth/me', code=307)
+
+@app.route('/api/logout', methods=['POST', 'OPTIONS'])
+def api_logout_alias():
+    return redirect('/api/auth/logout', code=307)
+
 def serve_spa_index():
     if DIST_DIR.exists():
         return send_from_directory(app.static_folder, "index.html")
