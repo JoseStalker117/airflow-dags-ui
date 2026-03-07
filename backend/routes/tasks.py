@@ -16,6 +16,12 @@ TASK_REQUIRED_FIELDS = [
     'template',
     'parameters',
 ]
+ROOT_TASK_TYPES = {'DAG', 'ArgoWorkflow'}
+
+
+def requires_task_id_parameter(task_data):
+    """Solo tasks no-raíz requieren parameters.task_id."""
+    return task_data.get('type') not in ROOT_TASK_TYPES
 
 # GET todas las tasks desde Firestore (público, sin autenticación)
 @tasks_bp.route('/tasks', methods=['GET'])
@@ -102,7 +108,7 @@ def create_task():
             return jsonify({'error': 'framework debe ser "airflow" o "argo"'}), 400
         if not isinstance(data.get('parameters'), dict):
             return jsonify({'error': 'parameters debe ser un objeto'}), 400
-        if 'task_id' not in data.get('parameters', {}):
+        if requires_task_id_parameter(data) and 'task_id' not in data.get('parameters', {}):
             return jsonify({'error': 'parameters.task_id es obligatorio'}), 400
         
         # Agregar metadata
@@ -146,7 +152,11 @@ def update_task(task_id):
             return jsonify({'error': 'framework debe ser "airflow" o "argo"'}), 400
         if 'parameters' in data and not isinstance(data.get('parameters'), dict):
             return jsonify({'error': 'parameters debe ser un objeto'}), 400
-        if 'parameters' in data and 'task_id' not in data.get('parameters', {}):
+        if (
+            'parameters' in data
+            and requires_task_id_parameter(data)
+            and 'task_id' not in data.get('parameters', {})
+        ):
             return jsonify({'error': 'parameters.task_id es obligatorio'}), 400
         
         # Actualizar metadata

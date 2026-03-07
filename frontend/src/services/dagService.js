@@ -7,6 +7,7 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 const ROOT_AIRFLOW_TYPE = 'DAG';
+const ROOT_ARGO_TYPE = 'ArgoWorkflow';
 const BRANCH_TYPE = 'BranchPythonOperator';
 
 const AIRFLOW_IMPORT_BY_TYPE = {
@@ -40,7 +41,6 @@ const DEFAULT_ARGS_KEYS = new Set([
   'retry_delay',
   'retry_exponential_backoff',
   'max_retry_delay',
-  'catchup',
   'sla',
   'execution_timeout',
 ]);
@@ -70,11 +70,14 @@ const sanitizePythonIdentifier = (value, fallback = 'task_ref') => {
   return withPrefix || fallback;
 };
 
-const parseDateLiteral = (value) => {
+const parseDateLiteral = (value, timezoneName = null) => {
   if (typeof value !== 'string') return null;
   const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
   const [, y, m, d] = match;
+  if (timezoneName && String(timezoneName).trim()) {
+    return `datetime(${Number(y)}, ${Number(m)}, ${Number(d)}, tzinfo=timezone('${String(timezoneName).trim()}'))`;
+  }
   return `datetime(${Number(y)}, ${Number(m)}, ${Number(d)})`;
 };
 
@@ -148,14 +151,18 @@ const topologicalSort = (nodeIds, edges) => {
 const buildDefaultArgsAndDagConfig = (rootParams = {}) => {
   const defaultArgs = {};
   const dagConfig = {};
+  const startDateTimezone = rootParams?.start_date_timezone || rootParams?.timezone || null;
 
   for (const [key, value] of Object.entries(rootParams || {})) {
     if (value === '' || value === undefined) continue;
+    if (key === 'start_date_timezone' || key === 'timezone') continue;
     if (DEFAULT_ARGS_KEYS.has(key)) {
       if (key === 'start_date') {
-        defaultArgs[key] = parseDateLiteral(value) || toPythonLiteral(value);
+        defaultArgs[key] = parseDateLiteral(value, startDateTimezone) || toPythonLiteral(value);
       } else if (key === 'retry_delay' && typeof value === 'number') {
-        defaultArgs[key] = `timedelta(seconds=${value})`;
+        defaultArgs[key] = `timedelta(minutes=${value})`;
+      } else if (key === 'retry_delay' && typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+        defaultArgs[key] = `timedelta(minutes=${Number(value)})`;
       } else {
         defaultArgs[key] = toPythonLiteral(value);
       }
@@ -171,6 +178,317 @@ const buildDefaultArgsAndDagConfig = (rootParams = {}) => {
   if (!defaultArgs.retry_delay) defaultArgs.retry_delay = 'timedelta(minutes=5)';
 
   return { defaultArgs, dagConfig };
+};
+
+const durationToTimedeltaLiteral = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return `timedelta(minutes=${value})`;
+  }
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^timedelta\(.+\)$/.test(trimmed)) return trimmed;
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    return `timedelta(minutes=${numeric})`;
+  }
+  return null;
+};
+
+const detectWorkflowRootFramework = (nodes = []) => {
+  const hasAirflowRoot = nodes.some((n) => n?.data?.type === ROOT_AIRFLOW_TYPE);
+  const hasArgoRoot = nodes.some((n) => n?.data?.type === ROOT_ARGO_TYPE);
+
+  if (hasAirflowRoot && hasArgoRoot) {
+    throw new Error('No se puede exportar: el workflow mezcla raíz de Airflow y Argo.');
+  }
+  if (hasAirflowRoot) return 'airflow';
+  if (hasArgoRoot) return 'argo';
+  return null;
+};
+
+const downloadTextFile = (content, filename, mime = 'text/plain') => {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId = 'generated_dag') => {
+  const rootNode = nodes.find((n) => n?.data?.type === ROOT_AIRFLOW_TYPE);
+  if (!rootNode) {
+    throw new Error('No se encontró el nodo raíz DAG para exportar a Airflow.');
+  }
+  if (nodes.some((n) => n?.data?.type === ROOT_ARGO_TYPE)) {
+    throw new Error('Exportar Python de Airflow no soporta workflows de Argo.');
+  }
+
+  const taskNodes = nodes.filter((n) => n.id !== rootNode.id);
+  const taskNodeIds = taskNodes.map((n) => n.id);
+  const taskEdges = edges.filter(
+    (e) => e.source !== rootNode.id && e.target !== rootNode.id,
+  );
+
+  const rootParams = rootNode.data?.parameters || {};
+  const { defaultArgs, dagConfig } = buildDefaultArgsAndDagConfig(rootParams);
+  const dagId = sanitizeTaskId(rootParams.dag_id || rootNode.data?.task_id || fallbackDagId, fallbackDagId);
+  const dagDescription = dagConfig.description ?? rootNode.data?.description ?? '';
+  const dagSchedule = dagConfig.schedule_interval ?? dagConfig.schedule ?? '@daily';
+  const dagCatchup = dagConfig.catchup !== undefined ? dagConfig.catchup : false;
+  const dagTags = Array.isArray(dagConfig.tags) ? dagConfig.tags : [];
+  const dagRunTimeoutLiteral = durationToTimedeltaLiteral(dagConfig.dagrun_timeout);
+  const dagConcurrency =
+    dagConfig.concurrency !== undefined && dagConfig.concurrency !== ''
+      ? Number(dagConfig.concurrency)
+      : null;
+  const dagMaxActiveRuns =
+    dagConfig.max_active_runs !== undefined && dagConfig.max_active_runs !== ''
+      ? Number(dagConfig.max_active_runs)
+      : null;
+  const dagUserDefinedMacros =
+    dagConfig.user_defined_macros && typeof dagConfig.user_defined_macros === 'object'
+      ? dagConfig.user_defined_macros
+      : null;
+
+  const orderedTaskIds = topologicalSort(taskNodeIds, taskEdges);
+
+  const importLines = new Set([
+    'from datetime import datetime, timedelta',
+    'from airflow import DAG',
+    'from pendulum import timezone',
+  ]);
+  if (String(defaultArgs.start_date || '').includes('timezone(')) {
+    importLines.add('from pendulum import timezone');
+  }
+
+  const branchCallableNames = new Set();
+  const taskVarByNodeId = new Map();
+  const usedVarNames = new Set();
+  const taskDefinitions = [];
+
+  const makeUniqueVarName = (base) => {
+    let name = sanitizePythonIdentifier(base, 'task_ref');
+    let i = 2;
+    while (usedVarNames.has(name)) {
+      name = `${sanitizePythonIdentifier(base, 'task_ref')}_${i}`;
+      i += 1;
+    }
+    usedVarNames.add(name);
+    return name;
+  };
+
+  orderedTaskIds.forEach((nodeId) => {
+    const node = taskNodes.find((n) => n.id === nodeId);
+    if (!node) return;
+
+    const operatorType = node.data?.type || 'PythonOperator';
+    const params = { ...(node.data?.parameters || {}) };
+    const taskId = sanitizeTaskId(params.task_id || node.data?.task_id || node.id, node.id);
+    const taskVar = makeUniqueVarName(taskId);
+    taskVarByNodeId.set(node.id, taskVar);
+
+    const literalImport = node.data?.importLiteral || node.data?.pythonImportLiteral;
+    if (typeof literalImport === 'string' && literalImport.trim()) {
+      importLines.add(literalImport.trim());
+    }
+
+    const customImportMeta = node.data?.imports || node.data?.import || node.data?.operatorImport;
+    normalizeImportMeta(customImportMeta).forEach((line) => importLines.add(line));
+    if (!literalImport && !customImportMeta && AIRFLOW_IMPORT_BY_TYPE[operatorType]) {
+      importLines.add(AIRFLOW_IMPORT_BY_TYPE[operatorType]);
+    }
+
+    const kwargsLines = [`task_id='${taskId}'`];
+
+    Object.entries(params).forEach(([key, rawValue]) => {
+      if (key === 'task_id' || rawValue === '' || rawValue === undefined) return;
+
+      if (CALLABLE_OPERATOR_TYPES.has(operatorType) && key === 'python_callable') {
+        const callableName = sanitizePythonIdentifier(rawValue || `${taskId}_callable`, `${taskId}_callable`);
+        kwargsLines.push(`${key}=${callableName}`);
+        branchCallableNames.add(callableName);
+        return;
+      }
+
+      kwargsLines.push(`${key}=${toPythonLiteral(rawValue)}`);
+    });
+
+    if (CALLABLE_OPERATOR_TYPES.has(operatorType) && !kwargsLines.some((line) => line.startsWith('python_callable='))) {
+      const callableName = sanitizePythonIdentifier(`${taskId}_callable`, 'task_callable');
+      kwargsLines.push(`python_callable=${callableName}`);
+      branchCallableNames.add(callableName);
+    }
+
+    taskDefinitions.push(
+      `    ${taskVar} = ${operatorType}(\n        ${kwargsLines.join(',\n        ')},\n    )`,
+    );
+  });
+
+  const branchNodes = taskNodes.filter((n) => n.data?.type === BRANCH_TYPE);
+  const branchDummyDefinitions = [];
+  const dependencyLines = [];
+
+  const outgoingByNode = new Map();
+  taskEdges.forEach((e) => {
+    if (!outgoingByNode.has(e.source)) outgoingByNode.set(e.source, []);
+    outgoingByNode.get(e.source).push(e);
+  });
+
+  edges.forEach((e) => {
+    if (!taskVarByNodeId.has(e.source) || !taskVarByNodeId.has(e.target)) return;
+    dependencyLines.push(`    ${taskVarByNodeId.get(e.source)} >> ${taskVarByNodeId.get(e.target)}`);
+  });
+
+  branchNodes.forEach((branchNode) => {
+    const branchVar = taskVarByNodeId.get(branchNode.id);
+    if (!branchVar) return;
+
+    const branchTaskId = sanitizeTaskId(
+      branchNode.data?.parameters?.task_id || branchNode.data?.task_id || branchNode.id,
+      branchNode.id,
+    );
+    importLines.add('from airflow.operators.dummy import DummyOperator');
+
+    const trueEndTaskId = `${branchTaskId}__true_end`;
+    const falseEndTaskId = `${branchTaskId}__false_end`;
+    const trueEndVar = makeUniqueVarName(trueEndTaskId);
+    const falseEndVar = makeUniqueVarName(falseEndTaskId);
+
+    branchDummyDefinitions.push(
+      `    ${trueEndVar} = DummyOperator(task_id='${trueEndTaskId}')`,
+      `    ${falseEndVar} = DummyOperator(task_id='${falseEndTaskId}')`,
+    );
+
+    const trueStartEdge = edges.find((e) => e.source === branchNode.id && e.sourceHandle === 'true');
+    const falseStartEdge = edges.find((e) => e.source === branchNode.id && e.sourceHandle === 'false');
+
+    const getReachableLeaves = (startNodeId) => {
+      if (!startNodeId || !taskVarByNodeId.has(startNodeId)) return [];
+      const visited = new Set();
+      const queue = [startNodeId];
+      while (queue.length) {
+        const current = queue.shift();
+        if (visited.has(current)) continue;
+        visited.add(current);
+        const outgoing = outgoingByNode.get(current) || [];
+        outgoing.forEach((edge) => {
+          if (taskVarByNodeId.has(edge.target)) queue.push(edge.target);
+        });
+      }
+
+      const leaves = [...visited].filter((nodeId) => {
+        const outgoing = (outgoingByNode.get(nodeId) || []).filter((edge) => visited.has(edge.target));
+        return outgoing.length === 0;
+      });
+      return leaves.length ? leaves : [startNodeId];
+    };
+
+    const trueLeaves = getReachableLeaves(trueStartEdge?.target);
+    const falseLeaves = getReachableLeaves(falseStartEdge?.target);
+
+    trueLeaves.forEach((leafNodeId) => {
+      dependencyLines.push(`    ${taskVarByNodeId.get(leafNodeId)} >> ${trueEndVar}`);
+    });
+    falseLeaves.forEach((leafNodeId) => {
+      dependencyLines.push(`    ${taskVarByNodeId.get(leafNodeId)} >> ${falseEndVar}`);
+    });
+  });
+
+  const defaultArgsLines = Object.entries(defaultArgs).map(([k, v]) => `    '${k}': ${v},`);
+  const branchCallableDefs = [...branchCallableNames]
+    .sort()
+    .map((callableName) => `def ${callableName}(**context):\n    """TODO: Implementar lógica para ${callableName}"""\n    pass\n`);
+
+  const pythonCode = `"""
+DAG exportado desde DAG Builder
+Compatible con Apache Airflow 2.4.0
+Generado: ${new Date().toLocaleString('es-MX')}
+"""
+
+${[...importLines].sort().join('\n')}
+
+${branchCallableDefs.join('\n')}
+# Default args para el nodo raíz del DAG
+default_args = {
+${defaultArgsLines.join('\n')}
+}
+
+with DAG(
+    dag_id='${dagId}',
+    default_args=default_args,
+    schedule_interval=${toPythonLiteral(dagSchedule)},
+    catchup=${toPythonLiteral(Boolean(dagCatchup))},
+    ${dagRunTimeoutLiteral ? `dagrun_timeout=${dagRunTimeoutLiteral},` : ''}
+    ${Number.isFinite(dagConcurrency) ? `concurrency=${dagConcurrency},` : ''}
+    ${Number.isFinite(dagMaxActiveRuns) ? `max_active_runs=${dagMaxActiveRuns},` : ''}
+    tags=${toPythonLiteral(dagTags)},
+    ${dagUserDefinedMacros ? `user_defined_macros=${toPythonLiteral(dagUserDefinedMacros)},` : ''}
+    description=${toPythonLiteral(dagDescription)},
+) as dag:
+${[...taskDefinitions, ...branchDummyDefinitions].join('\n\n')}
+
+    # Secuencia del workflow
+${dependencyLines.join('\n')}
+`;
+
+  downloadTextFile(pythonCode, filename, 'text/x-python');
+  console.log('✅ Python Airflow exportado:', filename);
+  return { success: true, filename, framework: 'airflow' };
+};
+
+const exportArgoToPythonTodo = (nodes, edges, filename = 'workflow_argo.py') => {
+  const rootNode = nodes.find((n) => n?.data?.type === ROOT_ARGO_TYPE);
+  if (!rootNode) {
+    throw new Error('No se encontró el nodo raíz ArgoWorkflow para exportar.');
+  }
+
+  const workflowName = sanitizeTaskId(
+    rootNode.data?.parameters?.workflow_name || rootNode.data?.task_id || 'argo_workflow',
+    'argo_workflow',
+  );
+
+  const todoTemplate = `"""
+TODO: Exportador Argo Workflows pendiente de desarrollo
+Generado: ${new Date().toLocaleString('es-MX')}
+"""
+
+# Este archivo se genera como placeholder para el flujo Argo.
+# Implementar:
+# 1) Mapeo de nodos/edges a spec.templates
+# 2) Dependencias con dag.tasks[].dependencies
+# 3) branch/conditionals a when/continueOn
+
+def build_argo_workflow():
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+            "generateName": "${workflowName}-",
+        },
+        "spec": {
+            "entrypoint": "main",
+            "templates": [
+                # TODO: renderizar templates desde nodos
+            ],
+        },
+    }
+
+if __name__ == "__main__":
+    wf = build_argo_workflow()
+    print("TODO Argo export:", wf["metadata"]["generateName"])
+    print("nodes:", ${nodes.length}, "edges:", ${edges.length})
+`;
+
+  downloadTextFile(todoTemplate, filename, 'text/x-python');
+  console.log('📝 Python Argo (TODO) exportado:', filename);
+  return { success: true, filename, framework: 'argo', todo: true };
 };
 
 // ============== SERVICIO DE API ==============
@@ -280,215 +598,16 @@ export const dagService = {
     }
   },
 
-  // 🐍 Exportar a Python (Airflow DAG)
+  // 🐍 Exportar a Python (polimórfico por nodo raíz)
   exportToPython: (nodes, edges, filename = 'dag.py', fallbackDagId = 'generated_dag') => {
-    const rootNode = nodes.find((n) => n?.data?.type === ROOT_AIRFLOW_TYPE);
-    if (!rootNode) {
-      throw new Error('No se encontró el nodo raíz DAG para exportar a Airflow.');
+    const workflowFramework = detectWorkflowRootFramework(nodes);
+    if (workflowFramework === 'airflow') {
+      return exportAirflowToPython(nodes, edges, filename, fallbackDagId);
     }
-    if (nodes.some((n) => n?.data?.type === 'ArgoWorkflow')) {
-      throw new Error('Exportar Python solo soporta workflows de Airflow.');
+    if (workflowFramework === 'argo') {
+      return exportArgoToPythonTodo(nodes, edges, filename);
     }
-
-    const taskNodes = nodes.filter((n) => n.id !== rootNode.id);
-    const taskNodeIds = taskNodes.map((n) => n.id);
-    const taskEdges = edges.filter(
-      (e) => e.source !== rootNode.id && e.target !== rootNode.id,
-    );
-
-    const rootParams = rootNode.data?.parameters || {};
-    const { defaultArgs, dagConfig } = buildDefaultArgsAndDagConfig(rootParams);
-    const dagId = sanitizeTaskId(rootParams.dag_id || rootNode.data?.task_id || fallbackDagId, fallbackDagId);
-    const dagDescription = dagConfig.description ?? rootNode.data?.description ?? '';
-    const dagSchedule = dagConfig.schedule ?? dagConfig.schedule_interval ?? '@daily';
-    const dagCatchup = dagConfig.catchup !== undefined ? dagConfig.catchup : false;
-    const dagTags = Array.isArray(dagConfig.tags) ? dagConfig.tags : [];
-
-    const orderedTaskIds = topologicalSort(taskNodeIds, taskEdges);
-
-    const importLines = new Set([
-      'from datetime import datetime, timedelta',
-      'from airflow import DAG',
-    ]);
-
-    const branchCallableNames = new Set();
-    const taskVarByNodeId = new Map();
-    const usedVarNames = new Set();
-    const taskDefinitions = [];
-
-    const makeUniqueVarName = (base) => {
-      let name = sanitizePythonIdentifier(base, 'task_ref');
-      let i = 2;
-      while (usedVarNames.has(name)) {
-        name = `${sanitizePythonIdentifier(base, 'task_ref')}_${i}`;
-        i += 1;
-      }
-      usedVarNames.add(name);
-      return name;
-    };
-
-    orderedTaskIds.forEach((nodeId) => {
-      const node = taskNodes.find((n) => n.id === nodeId);
-      if (!node) return;
-
-      const operatorType = node.data?.type || 'PythonOperator';
-      const params = { ...(node.data?.parameters || {}) };
-      const taskId = sanitizeTaskId(params.task_id || node.data?.task_id || node.id, node.id);
-      const taskVar = makeUniqueVarName(taskId);
-      taskVarByNodeId.set(node.id, taskVar);
-
-      const literalImport = node.data?.importLiteral || node.data?.pythonImportLiteral;
-      if (typeof literalImport === 'string' && literalImport.trim()) {
-        importLines.add(literalImport.trim());
-      }
-
-      const customImportMeta = node.data?.imports || node.data?.import || node.data?.operatorImport;
-      normalizeImportMeta(customImportMeta).forEach((line) => importLines.add(line));
-      if (!literalImport && !customImportMeta && AIRFLOW_IMPORT_BY_TYPE[operatorType]) {
-        importLines.add(AIRFLOW_IMPORT_BY_TYPE[operatorType]);
-      }
-
-      const kwargsLines = [`task_id='${taskId}'`];
-
-      Object.entries(params).forEach(([key, rawValue]) => {
-        if (key === 'task_id' || rawValue === '' || rawValue === undefined) return;
-
-        if (CALLABLE_OPERATOR_TYPES.has(operatorType) && key === 'python_callable') {
-          const callableName = sanitizePythonIdentifier(rawValue || `${taskId}_callable`, `${taskId}_callable`);
-          kwargsLines.push(`${key}=${callableName}`);
-          branchCallableNames.add(callableName);
-          return;
-        }
-
-        kwargsLines.push(`${key}=${toPythonLiteral(rawValue)}`);
-      });
-
-      if (CALLABLE_OPERATOR_TYPES.has(operatorType) && !kwargsLines.some((line) => line.startsWith('python_callable='))) {
-        const callableName = sanitizePythonIdentifier(`${taskId}_callable`, 'task_callable');
-        kwargsLines.push(`python_callable=${callableName}`);
-        branchCallableNames.add(callableName);
-      }
-
-      taskDefinitions.push(
-        `    ${taskVar} = ${operatorType}(\n        ${kwargsLines.join(',\n        ')},\n    )`,
-      );
-    });
-
-    const branchNodes = taskNodes.filter((n) => n.data?.type === BRANCH_TYPE);
-    const branchDummyDefinitions = [];
-    const dependencyLines = [];
-
-    const outgoingByNode = new Map();
-    taskEdges.forEach((e) => {
-      if (!outgoingByNode.has(e.source)) outgoingByNode.set(e.source, []);
-      outgoingByNode.get(e.source).push(e);
-    });
-
-    edges.forEach((e) => {
-      if (!taskVarByNodeId.has(e.source) || !taskVarByNodeId.has(e.target)) return;
-      dependencyLines.push(`    ${taskVarByNodeId.get(e.source)} >> ${taskVarByNodeId.get(e.target)}`);
-    });
-
-    branchNodes.forEach((branchNode) => {
-      const branchVar = taskVarByNodeId.get(branchNode.id);
-      if (!branchVar) return;
-
-      const branchTaskId = sanitizeTaskId(
-        branchNode.data?.parameters?.task_id || branchNode.data?.task_id || branchNode.id,
-        branchNode.id,
-      );
-      importLines.add('from airflow.operators.dummy import DummyOperator');
-
-      const trueEndTaskId = `${branchTaskId}__true_end`;
-      const falseEndTaskId = `${branchTaskId}__false_end`;
-      const trueEndVar = makeUniqueVarName(trueEndTaskId);
-      const falseEndVar = makeUniqueVarName(falseEndTaskId);
-
-      branchDummyDefinitions.push(
-        `    ${trueEndVar} = DummyOperator(task_id='${trueEndTaskId}')`,
-        `    ${falseEndVar} = DummyOperator(task_id='${falseEndTaskId}')`,
-      );
-
-      const trueStartEdge = edges.find((e) => e.source === branchNode.id && e.sourceHandle === 'true');
-      const falseStartEdge = edges.find((e) => e.source === branchNode.id && e.sourceHandle === 'false');
-
-      const getReachableLeaves = (startNodeId) => {
-        if (!startNodeId || !taskVarByNodeId.has(startNodeId)) return [];
-        const visited = new Set();
-        const queue = [startNodeId];
-        while (queue.length) {
-          const current = queue.shift();
-          if (visited.has(current)) continue;
-          visited.add(current);
-          const outgoing = outgoingByNode.get(current) || [];
-          outgoing.forEach((edge) => {
-            if (taskVarByNodeId.has(edge.target)) queue.push(edge.target);
-          });
-        }
-
-        const leaves = [...visited].filter((nodeId) => {
-          const outgoing = (outgoingByNode.get(nodeId) || []).filter((edge) => visited.has(edge.target));
-          return outgoing.length === 0;
-        });
-        return leaves.length ? leaves : [startNodeId];
-      };
-
-      const trueLeaves = getReachableLeaves(trueStartEdge?.target);
-      const falseLeaves = getReachableLeaves(falseStartEdge?.target);
-
-      trueLeaves.forEach((leafNodeId) => {
-        dependencyLines.push(`    ${taskVarByNodeId.get(leafNodeId)} >> ${trueEndVar}`);
-      });
-      falseLeaves.forEach((leafNodeId) => {
-        dependencyLines.push(`    ${taskVarByNodeId.get(leafNodeId)} >> ${falseEndVar}`);
-      });
-    });
-
-    const defaultArgsLines = Object.entries(defaultArgs).map(([k, v]) => `    '${k}': ${v},`);
-    const branchCallableDefs = [...branchCallableNames]
-      .sort()
-      .map((callableName) => `def ${callableName}(**context):\n    """TODO: Implementar lógica para ${callableName}"""\n    pass\n`);
-
-    const pythonCode = `"""
-DAG exportado desde DAG Builder
-Compatible con Apache Airflow 2.4.0
-Generado: ${new Date().toLocaleString('es-MX')}
-"""
-
-${[...importLines].sort().join('\n')}
-
-${branchCallableDefs.join('\n')}
-# Default args para el nodo raíz del DAG
-default_args = {
-${defaultArgsLines.join('\n')}
-}
-
-with DAG(
-    dag_id='${dagId}',
-    default_args=default_args,
-    schedule_interval=${toPythonLiteral(dagSchedule)},
-    catchup=${toPythonLiteral(Boolean(dagCatchup))},
-    tags=${toPythonLiteral(dagTags)},
-    description=${toPythonLiteral(dagDescription)},
-) as dag:
-${[...taskDefinitions, ...branchDummyDefinitions].join('\n\n')}
-
-    # Secuencia del workflow
-${dependencyLines.join('\n')}
-`;
-
-    const blob = new Blob([pythonCode], { type: 'text/x-python' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    
-    console.log('✅ Python exportado:', filename);
-    return { success: true, filename };
+    throw new Error('No se encontró un nodo raíz válido (DAG o ArgoWorkflow) para exportar.');
   },
 
   // 📥 Importar desde JSON

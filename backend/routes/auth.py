@@ -76,6 +76,8 @@ def login():
         firebase_api_key = os.getenv("FIREBASE_WEB_API_KEY")
         if not firebase_api_key:
             return jsonify({'error': 'FIREBASE_WEB_API_KEY no configurado en el backend'}), 500
+        if firebase_api_key.strip() == 'TU_FIREBASE_WEB_API_KEY':
+            return jsonify({'error': 'FIREBASE_WEB_API_KEY tiene valor placeholder; configúrala con la Web API Key real de Firebase'}), 500
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={firebase_api_key}"
         
         payload = {
@@ -84,10 +86,25 @@ def login():
             "returnSecureToken": True
         }
         
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=10)
         
         if response.status_code != 200:
-            return jsonify({'error': 'Credenciales incorrectas'}), 401
+            firebase_error = None
+            try:
+                firebase_error = response.json().get('error', {}).get('message')
+            except Exception:
+                firebase_error = None
+
+            error_map = {
+                'EMAIL_NOT_FOUND': ('Email no registrado', 401),
+                'INVALID_PASSWORD': ('Contraseña incorrecta', 401),
+                'INVALID_LOGIN_CREDENTIALS': ('Credenciales incorrectas', 401),
+                'USER_DISABLED': ('Usuario deshabilitado', 403),
+                'INVALID_API_KEY': ('FIREBASE_WEB_API_KEY inválida', 500),
+                'PROJECT_NOT_FOUND': ('Proyecto Firebase no encontrado (revisa FIREBASE_WEB_API_KEY)', 500),
+            }
+            message, status = error_map.get(firebase_error, ('Error autenticando con Firebase', 401))
+            return jsonify({'error': message, 'firebaseError': firebase_error}), status
         
         firebase_data = response.json()
         uid = firebase_data['localId']
