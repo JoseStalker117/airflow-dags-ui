@@ -22,7 +22,13 @@ const Login = () => {
       await login(email, password);
       navigate('/splash');
     } catch (err) {
-      const errorMessage = err.response?.data?.error || 'Error al iniciar sesión';
+      const backendError = err.response?.data?.error;
+      const firebaseError = err.response?.data?.firebaseError;
+      const detail = err.response?.data?.detail;
+      const errorMessage =
+        [backendError, firebaseError ? `(${firebaseError})` : null, detail]
+          .filter(Boolean)
+          .join(' ') || 'Error al iniciar sesión';
       setError(errorMessage);
     } finally {
       setLoading(false);
