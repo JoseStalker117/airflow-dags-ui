@@ -3,75 +3,95 @@
 // Servicio completo para gestión de DAGs
 // ============================================
 
-import axios from 'axios';
+import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
-const ROOT_AIRFLOW_TYPE = 'DAG';
-const ROOT_ARGO_TYPE = 'ArgoWorkflow';
-const BRANCH_TYPE = 'BranchPythonOperator';
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+const ROOT_AIRFLOW_TYPE = "DAG";
+const ROOT_ARGO_TYPE = "ArgoWorkflow";
+const BRANCH_TYPE = "BranchPythonOperator";
 
 const AIRFLOW_IMPORT_BY_TYPE = {
-  BashOperator: 'from airflow.operators.bash import BashOperator',
-  PythonOperator: 'from airflow.operators.python import PythonOperator',
-  PythonVirtualenvOperator: 'from airflow.operators.python import PythonVirtualenvOperator',
-  BranchPythonOperator: 'from airflow.operators.python import BranchPythonOperator',
-  ShortCircuitOperator: 'from airflow.operators.python import ShortCircuitOperator',
-  DummyOperator: 'from airflow.operators.dummy import DummyOperator',
-  PostgresOperator: 'from airflow.providers.postgres.operators.postgres import PostgresOperator',
-  BigQueryOperator: 'from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator as BigQueryOperator',
-  SQLExecuteQueryOperator: 'from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator',
-  LocalFilesystemToS3Operator: 'from airflow.providers.amazon.aws.transfers.local_to_s3 import LocalFilesystemToS3Operator',
-  S3ToS3Operator: 'from airflow.providers.amazon.aws.transfers.s3_to_s3 import S3ToS3Operator',
-  SFTPOperator: 'from airflow.providers.sftp.operators.sftp import SFTPOperator',
-  GCSToBigQueryOperator: 'from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator',
-  FileSensor: 'from airflow.sensors.filesystem import FileSensor',
-  S3KeySensor: 'from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor',
-  SqlSensor: 'from airflow.sensors.sql import SqlSensor',
-  HttpSensor: 'from airflow.providers.http.sensors.http import HttpSensor',
+  BashOperator: "from airflow.operators.bash import BashOperator",
+  PythonOperator: "from airflow.operators.python import PythonOperator",
+  PythonVirtualenvOperator:
+    "from airflow.operators.python import PythonVirtualenvOperator",
+  BranchPythonOperator:
+    "from airflow.operators.python import BranchPythonOperator",
+  ShortCircuitOperator:
+    "from airflow.operators.python import ShortCircuitOperator",
+  DummyOperator: "from airflow.operators.dummy import DummyOperator",
+  PostgresOperator:
+    "from airflow.providers.postgres.operators.postgres import PostgresOperator",
+  BigQueryOperator:
+    "from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator as BigQueryOperator",
+  SQLExecuteQueryOperator:
+    "from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator",
+  LocalFilesystemToS3Operator:
+    "from airflow.providers.amazon.aws.transfers.local_to_s3 import LocalFilesystemToS3Operator",
+  S3ToS3Operator:
+    "from airflow.providers.amazon.aws.transfers.s3_to_s3 import S3ToS3Operator",
+  SFTPOperator:
+    "from airflow.providers.sftp.operators.sftp import SFTPOperator",
+  GCSToBigQueryOperator:
+    "from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator",
+  FileSensor: "from airflow.sensors.filesystem import FileSensor",
+  S3KeySensor:
+    "from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor",
+  SqlSensor: "from airflow.sensors.sql import SqlSensor",
+  HttpSensor: "from airflow.providers.http.sensors.http import HttpSensor",
 };
 
 const DEFAULT_ARGS_KEYS = new Set([
-  'owner',
-  'depends_on_past',
-  'start_date',
-  'email',
-  'email_on_failure',
-  'email_on_retry',
-  'retries',
-  'retry_delay',
-  'retry_exponential_backoff',
-  'max_retry_delay',
-  'sla',
-  'execution_timeout',
+  "owner",
+  "depends_on_past",
+  "start_date",
+  "email",
+  "email_on_failure",
+  "email_on_retry",
+  "retries",
+  "retry_delay",
+  "retry_exponential_backoff",
+  "max_retry_delay",
+  "sla",
+  "execution_timeout",
 ]);
 
 const CALLABLE_OPERATOR_TYPES = new Set([
-  'PythonOperator',
-  'PythonVirtualenvOperator',
+  "PythonOperator",
+  "PythonVirtualenvOperator",
   BRANCH_TYPE,
-  'ShortCircuitOperator',
+  "ShortCircuitOperator",
 ]);
 
-const sanitizeTaskId = (value, fallback = 'task') => {
+const NUMERIC_FIELDS = new Set([
+  "retries",
+  "poke_interval",
+  "timeout",
+  "concurrency",
+  "max_active_runs",
+]);
+
+const sanitizeTaskId = (value, fallback = "task") => {
   const base = String(value || fallback)
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return base || fallback;
 };
 
-const sanitizePythonIdentifier = (value, fallback = 'task_ref') => {
+const sanitizePythonIdentifier = (value, fallback = "task_ref") => {
   const cleaned = String(value || fallback)
     .trim()
-    .replace(/[^a-zA-Z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   const withPrefix = /^[a-zA-Z_]/.test(cleaned) ? cleaned : `n_${cleaned}`;
   return withPrefix || fallback;
 };
 
 const parseDateLiteral = (value, timezoneName = null) => {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== "string") return null;
   const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
   const [, y, m, d] = match;
@@ -82,33 +102,59 @@ const parseDateLiteral = (value, timezoneName = null) => {
 };
 
 const toPythonLiteral = (value) => {
-  if (value === null || value === undefined) return 'None';
-  if (typeof value === 'boolean') return value ? 'True' : 'False';
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'None';
-  if (typeof value === 'string') return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  if (value === null || value === undefined) return "None";
+
+  if (typeof value === "boolean") return value ? "True" : "False";
+
+  if (typeof value === "number")
+    return Number.isFinite(value) ? String(value) : "None";
+
+  if (typeof value === "string")
+    return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+
   if (Array.isArray(value)) {
-    return `[${value.map((item) => toPythonLiteral(item)).join(', ')}]`;
+    return `[${value.map((item) => toPythonLiteral(item)).join(", ")}]`;
   }
-  if (typeof value === 'object') {
+
+  if (typeof value === "object") {
     const entries = Object.entries(value);
-    if (!entries.length) return '{}';
+    if (!entries.length) return "{}";
     return `{${entries
-      .map(([k, v]) => `'${String(k).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}': ${toPythonLiteral(v)}`)
-      .join(', ')}}`;
+      .map(
+        ([k, v]) =>
+          `'${String(k).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}': ${toPythonLiteral(v)}`,
+      )
+      .join(", ")}}`;
   }
   return `'${String(value)}'`;
 };
 
+const normalizePrimitive = (value) => {
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+
+    if (v === "true") return true;
+    if (v === "false") return false;
+
+    if (!isNaN(v) && v !== "") return Number(v);
+  }
+
+  return value;
+};
+
 const normalizeImportMeta = (meta) => {
   if (!meta) return [];
-  if (typeof meta === 'string') return [meta];
-  if (Array.isArray(meta)) return meta.flatMap((item) => normalizeImportMeta(item));
-  if (typeof meta === 'object') {
+  if (typeof meta === "string") return [meta];
+  if (Array.isArray(meta))
+    return meta.flatMap((item) => normalizeImportMeta(item));
+  if (typeof meta === "object") {
     const fromModule = meta.from || meta.module;
     const imported = meta.import || meta.class || meta.name;
     const alias = meta.as || meta.alias;
     if (fromModule && imported) {
-      return [`from ${fromModule} import ${imported}${alias ? ` as ${alias}` : ''}`];
+      return [
+        `from ${fromModule} import ${imported}${alias ? ` as ${alias}` : ""}`,
+      ];
     }
   }
   return [];
@@ -151,20 +197,27 @@ const topologicalSort = (nodeIds, edges) => {
 const buildDefaultArgsAndDagConfig = (rootParams = {}) => {
   const defaultArgs = {};
   const dagConfig = {};
-  const startDateTimezone = rootParams?.start_date_timezone || rootParams?.timezone || null;
+  const startDateTimezone =
+    rootParams?.start_date_timezone || rootParams?.timezone || null;
 
   for (const [key, value] of Object.entries(rootParams || {})) {
-    if (value === '' || value === undefined) continue;
-    if (key === 'start_date_timezone' || key === 'timezone') continue;
+    if (value === "" || value === undefined) continue;
+    if (key === "start_date_timezone" || key === "timezone") continue;
     if (DEFAULT_ARGS_KEYS.has(key)) {
-      if (key === 'start_date') {
-        defaultArgs[key] = parseDateLiteral(value, startDateTimezone) || toPythonLiteral(value);
-      } else if (key === 'retry_delay' && typeof value === 'number') {
+      if (key === "start_date") {
+        defaultArgs[key] =
+          parseDateLiteral(value, startDateTimezone) || toPythonLiteral(value);
+      } else if (key === "retry_delay" && typeof value === "number") {
         defaultArgs[key] = `timedelta(minutes=${value})`;
-      } else if (key === 'retry_delay' && typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) {
+      } else if (
+        key === "retry_delay" &&
+        typeof value === "string" &&
+        value.trim() !== "" &&
+        Number.isFinite(Number(value))
+      ) {
         defaultArgs[key] = `timedelta(minutes=${Number(value)})`;
       } else {
-        defaultArgs[key] = toPythonLiteral(value);
+        defaultArgs[key] = toPythonLiteral(normalizePrimitive(value));
       }
       continue;
     }
@@ -172,19 +225,20 @@ const buildDefaultArgsAndDagConfig = (rootParams = {}) => {
   }
 
   if (!defaultArgs.owner) defaultArgs.owner = "'airflow'";
-  if (!defaultArgs.depends_on_past) defaultArgs.depends_on_past = 'False';
-  if (!defaultArgs.start_date) defaultArgs.start_date = 'datetime(2024, 1, 1)';
-  if (!defaultArgs.retries) defaultArgs.retries = '1';
-  if (!defaultArgs.retry_delay) defaultArgs.retry_delay = 'timedelta(minutes=5)';
+  if (!defaultArgs.depends_on_past) defaultArgs.depends_on_past = "False";
+  if (!defaultArgs.start_date) defaultArgs.start_date = "datetime(2024, 1, 1)";
+  if (!defaultArgs.retries) defaultArgs.retries = "1";
+  if (!defaultArgs.retry_delay)
+    defaultArgs.retry_delay = "timedelta(minutes=5)";
 
   return { defaultArgs, dagConfig };
 };
 
 const durationToTimedeltaLiteral = (value) => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
+  if (typeof value === "number" && Number.isFinite(value)) {
     return `timedelta(minutes=${value})`;
   }
-  if (typeof value !== 'string') return null;
+  if (typeof value !== "string") return null;
 
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -202,17 +256,19 @@ const detectWorkflowRootFramework = (nodes = []) => {
   const hasArgoRoot = nodes.some((n) => n?.data?.type === ROOT_ARGO_TYPE);
 
   if (hasAirflowRoot && hasArgoRoot) {
-    throw new Error('No se puede exportar: el workflow mezcla raíz de Airflow y Argo.');
+    throw new Error(
+      "No se puede exportar: el workflow mezcla raíz de Airflow y Argo.",
+    );
   }
-  if (hasAirflowRoot) return 'airflow';
-  if (hasArgoRoot) return 'argo';
+  if (hasAirflowRoot) return "airflow";
+  if (hasArgoRoot) return "argo";
   return null;
 };
 
-const downloadTextFile = (content, filename, mime = 'text/plain') => {
+const downloadTextFile = (content, filename, mime = "text/plain") => {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
+  const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   document.body.appendChild(link);
@@ -221,13 +277,18 @@ const downloadTextFile = (content, filename, mime = 'text/plain') => {
   URL.revokeObjectURL(url);
 };
 
-const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId = 'generated_dag') => {
+const exportAirflowToPython = (
+  nodes,
+  edges,
+  filename = "dag.py",
+  fallbackDagId = "generated_dag",
+) => {
   const rootNode = nodes.find((n) => n?.data?.type === ROOT_AIRFLOW_TYPE);
   if (!rootNode) {
-    throw new Error('No se encontró el nodo raíz DAG para exportar a Airflow.');
+    throw new Error("No se encontró el nodo raíz DAG para exportar a Airflow.");
   }
   if (nodes.some((n) => n?.data?.type === ROOT_ARGO_TYPE)) {
-    throw new Error('Exportar Python de Airflow no soporta workflows de Argo.');
+    throw new Error("Exportar Python de Airflow no soporta workflows de Argo.");
   }
 
   const taskNodes = nodes.filter((n) => n.id !== rootNode.id);
@@ -238,34 +299,43 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
 
   const rootParams = rootNode.data?.parameters || {};
   const { defaultArgs, dagConfig } = buildDefaultArgsAndDagConfig(rootParams);
-  const dagId = sanitizeTaskId(rootParams.dag_id || rootNode.data?.task_id || fallbackDagId, fallbackDagId);
-  const dagDescription = dagConfig.description ?? rootNode.data?.description ?? '';
-  const dagSchedule = dagConfig.schedule_interval ?? dagConfig.schedule ?? '@daily';
-  const dagCatchup = dagConfig.catchup !== undefined ? dagConfig.catchup : false;
+  const dagId = sanitizeTaskId(
+    rootParams.dag_id || rootNode.data?.task_id || fallbackDagId,
+    fallbackDagId,
+  );
+  const dagDescription =
+    dagConfig.description ?? rootNode.data?.description ?? "";
+  const dagSchedule =
+    dagConfig.schedule_interval ?? dagConfig.schedule ?? "@daily";
+  const dagCatchup =
+    dagConfig.catchup !== undefined ? dagConfig.catchup : false;
   const dagTags = Array.isArray(dagConfig.tags) ? dagConfig.tags : [];
-  const dagRunTimeoutLiteral = durationToTimedeltaLiteral(dagConfig.dagrun_timeout);
+  const dagRunTimeoutLiteral = durationToTimedeltaLiteral(
+    dagConfig.dagrun_timeout,
+  );
   const dagConcurrency =
-    dagConfig.concurrency !== undefined && dagConfig.concurrency !== ''
+    dagConfig.concurrency !== undefined && dagConfig.concurrency !== ""
       ? Number(dagConfig.concurrency)
       : null;
   const dagMaxActiveRuns =
-    dagConfig.max_active_runs !== undefined && dagConfig.max_active_runs !== ''
+    dagConfig.max_active_runs !== undefined && dagConfig.max_active_runs !== ""
       ? Number(dagConfig.max_active_runs)
       : null;
   const dagUserDefinedMacros =
-    dagConfig.user_defined_macros && typeof dagConfig.user_defined_macros === 'object'
+    dagConfig.user_defined_macros &&
+    typeof dagConfig.user_defined_macros === "object"
       ? dagConfig.user_defined_macros
       : null;
 
   const orderedTaskIds = topologicalSort(taskNodeIds, taskEdges);
 
   const importLines = new Set([
-    'from datetime import datetime, timedelta',
-    'from airflow import DAG',
-    'from pendulum import timezone',
+    "from datetime import datetime, timedelta",
+    "from airflow import DAG",
+    "from pendulum import timezone",
   ]);
-  if (String(defaultArgs.start_date || '').includes('timezone(')) {
-    importLines.add('from pendulum import timezone');
+  if (String(defaultArgs.start_date || "").includes("timezone(")) {
+    importLines.add("from pendulum import timezone");
   }
 
   const branchCallableNames = new Set();
@@ -274,10 +344,10 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
   const taskDefinitions = [];
 
   const makeUniqueVarName = (base) => {
-    let name = sanitizePythonIdentifier(base, 'task_ref');
+    let name = sanitizePythonIdentifier(base, "task_ref");
     let i = 2;
     while (usedVarNames.has(name)) {
-      name = `${sanitizePythonIdentifier(base, 'task_ref')}_${i}`;
+      name = `${sanitizePythonIdentifier(base, "task_ref")}_${i}`;
       i += 1;
     }
     usedVarNames.add(name);
@@ -288,46 +358,105 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
     const node = taskNodes.find((n) => n.id === nodeId);
     if (!node) return;
 
-    const operatorType = node.data?.type || 'PythonOperator';
+    const operatorType = node.data?.type || "PythonOperator";
     const params = { ...(node.data?.parameters || {}) };
-    const taskId = sanitizeTaskId(params.task_id || node.data?.task_id || node.id, node.id);
+    const taskId = sanitizeTaskId(
+      params.task_id || node.data?.task_id || node.id,
+      node.id,
+    );
     const taskVar = makeUniqueVarName(taskId);
     taskVarByNodeId.set(node.id, taskVar);
 
-    const literalImport = node.data?.importLiteral || node.data?.pythonImportLiteral;
-    if (typeof literalImport === 'string' && literalImport.trim()) {
+    const literalImport =
+      node.data?.importLiteral || node.data?.pythonImportLiteral;
+    if (typeof literalImport === "string" && literalImport.trim()) {
       importLines.add(literalImport.trim());
     }
 
-    const customImportMeta = node.data?.imports || node.data?.import || node.data?.operatorImport;
-    normalizeImportMeta(customImportMeta).forEach((line) => importLines.add(line));
-    if (!literalImport && !customImportMeta && AIRFLOW_IMPORT_BY_TYPE[operatorType]) {
+    const customImportMeta =
+      node.data?.imports || node.data?.import || node.data?.operatorImport;
+    normalizeImportMeta(customImportMeta).forEach((line) =>
+      importLines.add(line),
+    );
+    if (
+      !literalImport &&
+      !customImportMeta &&
+      AIRFLOW_IMPORT_BY_TYPE[operatorType]
+    ) {
       importLines.add(AIRFLOW_IMPORT_BY_TYPE[operatorType]);
     }
 
     const kwargsLines = [`task_id='${taskId}'`];
 
     Object.entries(params).forEach(([key, rawValue]) => {
-      if (key === 'task_id' || rawValue === '' || rawValue === undefined) return;
+      if (key === "task_id" || rawValue === "" || rawValue === undefined)
+        return;
 
-      if (CALLABLE_OPERATOR_TYPES.has(operatorType) && key === 'python_callable') {
-        const callableName = sanitizePythonIdentifier(rawValue || `${taskId}_callable`, `${taskId}_callable`);
+      // python callable
+      if (
+        CALLABLE_OPERATOR_TYPES.has(operatorType) &&
+        key === "python_callable"
+      ) {
+        const callableName = sanitizePythonIdentifier(
+          rawValue || `${taskId}_callable`,
+          `${taskId}_callable`,
+        );
+
         kwargsLines.push(`${key}=${callableName}`);
         branchCallableNames.add(callableName);
         return;
       }
 
-      kwargsLines.push(`${key}=${toPythonLiteral(rawValue)}`);
+      // manejo especial op_kwargs
+      if (key === "op_kwargs") {
+        if (typeof rawValue === "object") {
+          kwargsLines.push(`${key}=${toPythonLiteral(rawValue)}`);
+        } else {
+          kwargsLines.push(`${key}={}`);
+        }
+
+        return;
+      }
+
+      let value = normalizePrimitive(rawValue);
+
+      // convertir campos numéricos
+      if (NUMERIC_FIELDS.has(key) && typeof value === "string") {
+        const n = Number(value);
+
+        if (Number.isFinite(n)) value = n;
+      }
+
+      // manejo especial retry_delay
+      if (key === "retry_delay") {
+        if (typeof value === "number") {
+          kwargsLines.push(`${key}=timedelta(minutes=${value})`);
+          return;
+        }
+
+        if (typeof value === "string" && !isNaN(value)) {
+          kwargsLines.push(`${key}=timedelta(minutes=${Number(value)})`);
+          return;
+        }
+      }
+
+      kwargsLines.push(`${key}=${toPythonLiteral(value)}`);
     });
 
-    if (CALLABLE_OPERATOR_TYPES.has(operatorType) && !kwargsLines.some((line) => line.startsWith('python_callable='))) {
-      const callableName = sanitizePythonIdentifier(`${taskId}_callable`, 'task_callable');
+    if (
+      CALLABLE_OPERATOR_TYPES.has(operatorType) &&
+      !kwargsLines.some((line) => line.startsWith("python_callable="))
+    ) {
+      const callableName = sanitizePythonIdentifier(
+        `${taskId}_callable`,
+        "task_callable",
+      );
       kwargsLines.push(`python_callable=${callableName}`);
       branchCallableNames.add(callableName);
     }
 
     taskDefinitions.push(
-      `    ${taskVar} = ${operatorType}(\n        ${kwargsLines.join(',\n        ')},\n    )`,
+      `    ${taskVar} = ${operatorType}(\n        ${kwargsLines.join(",\n        ")},\n    )`,
     );
   });
 
@@ -342,8 +471,11 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
   });
 
   edges.forEach((e) => {
-    if (!taskVarByNodeId.has(e.source) || !taskVarByNodeId.has(e.target)) return;
-    dependencyLines.push(`    ${taskVarByNodeId.get(e.source)} >> ${taskVarByNodeId.get(e.target)}`);
+    if (!taskVarByNodeId.has(e.source) || !taskVarByNodeId.has(e.target))
+      return;
+    dependencyLines.push(
+      `    ${taskVarByNodeId.get(e.source)} >> ${taskVarByNodeId.get(e.target)}`,
+    );
   });
 
   branchNodes.forEach((branchNode) => {
@@ -351,10 +483,12 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
     if (!branchVar) return;
 
     const branchTaskId = sanitizeTaskId(
-      branchNode.data?.parameters?.task_id || branchNode.data?.task_id || branchNode.id,
+      branchNode.data?.parameters?.task_id ||
+        branchNode.data?.task_id ||
+        branchNode.id,
       branchNode.id,
     );
-    importLines.add('from airflow.operators.dummy import DummyOperator');
+    importLines.add("from airflow.operators.dummy import DummyOperator");
 
     const trueEndTaskId = `${branchTaskId}__true_end`;
     const falseEndTaskId = `${branchTaskId}__false_end`;
@@ -366,8 +500,12 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
       `    ${falseEndVar} = DummyOperator(task_id='${falseEndTaskId}')`,
     );
 
-    const trueStartEdge = edges.find((e) => e.source === branchNode.id && e.sourceHandle === 'true');
-    const falseStartEdge = edges.find((e) => e.source === branchNode.id && e.sourceHandle === 'false');
+    const trueStartEdge = edges.find(
+      (e) => e.source === branchNode.id && e.sourceHandle === "true",
+    );
+    const falseStartEdge = edges.find(
+      (e) => e.source === branchNode.id && e.sourceHandle === "false",
+    );
 
     const getReachableLeaves = (startNodeId) => {
       if (!startNodeId || !taskVarByNodeId.has(startNodeId)) return [];
@@ -384,7 +522,9 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
       }
 
       const leaves = [...visited].filter((nodeId) => {
-        const outgoing = (outgoingByNode.get(nodeId) || []).filter((edge) => visited.has(edge.target));
+        const outgoing = (outgoingByNode.get(nodeId) || []).filter((edge) =>
+          visited.has(edge.target),
+        );
         return outgoing.length === 0;
       });
       return leaves.length ? leaves : [startNodeId];
@@ -394,30 +534,39 @@ const exportAirflowToPython = (nodes, edges, filename = 'dag.py', fallbackDagId 
     const falseLeaves = getReachableLeaves(falseStartEdge?.target);
 
     trueLeaves.forEach((leafNodeId) => {
-      dependencyLines.push(`    ${taskVarByNodeId.get(leafNodeId)} >> ${trueEndVar}`);
+      dependencyLines.push(
+        `    ${taskVarByNodeId.get(leafNodeId)} >> ${trueEndVar}`,
+      );
     });
     falseLeaves.forEach((leafNodeId) => {
-      dependencyLines.push(`    ${taskVarByNodeId.get(leafNodeId)} >> ${falseEndVar}`);
+      dependencyLines.push(
+        `    ${taskVarByNodeId.get(leafNodeId)} >> ${falseEndVar}`,
+      );
     });
   });
 
-  const defaultArgsLines = Object.entries(defaultArgs).map(([k, v]) => `    '${k}': ${v},`);
+  const defaultArgsLines = Object.entries(defaultArgs).map(
+    ([k, v]) => `    '${k}': ${v},`,
+  );
   const branchCallableDefs = [...branchCallableNames]
     .sort()
-    .map((callableName) => `def ${callableName}(**context):\n    """TODO: Implementar lógica para ${callableName}"""\n    pass\n`);
+    .map(
+      (callableName) =>
+        `def ${callableName}(**context):\n    """TODO: Implementar lógica para ${callableName}"""\n    pass\n`,
+    );
 
   const pythonCode = `"""
 DAG exportado desde DAGGER v1.0.0
 Compatible con Apache Airflow 2.4.0
-Generado: ${new Date().toLocaleString('es-MX')}
+Generado: ${new Date().toLocaleString("es-MX")}
 """
 
-${[...importLines].sort().join('\n')}
+${[...importLines].sort().join("\n")}
 
-${branchCallableDefs.join('\n')}
+${branchCallableDefs.join("\n")}
 # Default args para el nodo raíz del DAG
 default_args = {
-${defaultArgsLines.join('\n')}
+${defaultArgsLines.join("\n")}
 }
 
 with DAG(
@@ -425,38 +574,44 @@ with DAG(
     default_args=default_args,
     schedule_interval=${toPythonLiteral(dagSchedule)},
     catchup=${toPythonLiteral(Boolean(dagCatchup))},
-    ${dagRunTimeoutLiteral ? `dagrun_timeout=${dagRunTimeoutLiteral},` : ''}
-    ${Number.isFinite(dagConcurrency) ? `concurrency=${dagConcurrency},` : ''}
-    ${Number.isFinite(dagMaxActiveRuns) ? `max_active_runs=${dagMaxActiveRuns},` : ''}
+    ${dagRunTimeoutLiteral ? `dagrun_timeout=${dagRunTimeoutLiteral},` : ""}
+    ${Number.isFinite(dagConcurrency) ? `concurrency=${dagConcurrency},` : ""}
+    ${Number.isFinite(dagMaxActiveRuns) ? `max_active_runs=${dagMaxActiveRuns},` : ""}
     tags=${toPythonLiteral(dagTags)},
-    ${dagUserDefinedMacros ? `user_defined_macros=${toPythonLiteral(dagUserDefinedMacros)},` : ''}
+    ${dagUserDefinedMacros ? `user_defined_macros=${toPythonLiteral(dagUserDefinedMacros)},` : ""}
     description=${toPythonLiteral(dagDescription)},
 ) as dag:
-${[...taskDefinitions, ...branchDummyDefinitions].join('\n\n')}
+${[...taskDefinitions, ...branchDummyDefinitions].join("\n\n")}
 
     # Secuencia del workflow
-${dependencyLines.join('\n')}
+${dependencyLines.join("\n")}
 `;
 
-  downloadTextFile(pythonCode, filename, 'text/x-python');
-  console.log('✅ Python Airflow exportado:', filename);
-  return { success: true, filename, framework: 'airflow' };
+  downloadTextFile(pythonCode, filename, "text/x-python");
+  console.log("✅ Python Airflow exportado:", filename);
+  return { success: true, filename, framework: "airflow" };
 };
 
-const exportArgoToPythonTodo = (nodes, edges, filename = 'workflow_argo.py') => {
+const exportArgoToPythonTodo = (
+  nodes,
+  edges,
+  filename = "workflow_argo.py",
+) => {
   const rootNode = nodes.find((n) => n?.data?.type === ROOT_ARGO_TYPE);
   if (!rootNode) {
-    throw new Error('No se encontró el nodo raíz ArgoWorkflow para exportar.');
+    throw new Error("No se encontró el nodo raíz ArgoWorkflow para exportar.");
   }
 
   const workflowName = sanitizeTaskId(
-    rootNode.data?.parameters?.workflow_name || rootNode.data?.task_id || 'argo_workflow',
-    'argo_workflow',
+    rootNode.data?.parameters?.workflow_name ||
+      rootNode.data?.task_id ||
+      "argo_workflow",
+    "argo_workflow",
   );
 
   const todoTemplate = `"""
 TODO: Exportador Argo Workflows pendiente de desarrollo
-Generado: ${new Date().toLocaleString('es-MX')}
+Generado: ${new Date().toLocaleString("es-MX")}
 """
 
 # Este archivo se genera como placeholder para el flujo Argo.
@@ -486,9 +641,9 @@ if __name__ == "__main__":
     print("nodes:", ${nodes.length}, "edges:", ${edges.length})
 `;
 
-  downloadTextFile(todoTemplate, filename, 'text/x-python');
-  console.log('📝 Python Argo (TODO) exportado:', filename);
-  return { success: true, filename, framework: 'argo', todo: true };
+  downloadTextFile(todoTemplate, filename, "text/x-python");
+  console.log("📝 Python Argo (TODO) exportado:", filename);
+  return { success: true, filename, framework: "argo", todo: true };
 };
 
 // ============== SERVICIO DE API ==============
@@ -500,75 +655,77 @@ export const apiService = {
       method,
       endpoint,
       data,
-      status: 'pending'
+      status: "pending",
     };
-    
+
     try {
       const response = await axios({
         method,
         url: `${API_BASE_URL}${endpoint}`,
         data,
         headers: {
-          'Content-Type': 'application/json',
-          ...config.headers
+          "Content-Type": "application/json",
+          ...config.headers,
         },
-        ...config
+        ...config,
       });
-      
+
       console.log(`✅ ${method} ${endpoint}:`, response.data);
-      
+
       return {
         success: true,
         data: response.data,
-        log: { ...logEntry, status: 'success', response: response.data }
+        log: { ...logEntry, status: "success", response: response.data },
       };
     } catch (error) {
       console.error(`❌ ${method} ${endpoint}:`, error.message);
-      
+
       return {
         success: false,
         error: error.response?.data?.message || error.message,
-        log: { ...logEntry, status: 'error', error: error.message }
+        log: { ...logEntry, status: "error", error: error.message },
       };
     }
   },
 
   // Métodos HTTP
-  get: (endpoint, config) => apiService.request('GET', endpoint, null, config),
-  post: (endpoint, data, config) => apiService.request('POST', endpoint, data, config),
-  put: (endpoint, data, config) => apiService.request('PUT', endpoint, data, config),
-  delete: (endpoint, config) => apiService.request('DELETE', endpoint, null, config),
+  get: (endpoint, config) => apiService.request("GET", endpoint, null, config),
+  post: (endpoint, data, config) =>
+    apiService.request("POST", endpoint, data, config),
+  put: (endpoint, data, config) =>
+    apiService.request("PUT", endpoint, data, config),
+  delete: (endpoint, config) =>
+    apiService.request("DELETE", endpoint, null, config),
 };
 
 // ============== SERVICIO DE DAG ==============
 export const dagService = {
-  
   // 📤 Exportar a JSON
-  exportToJSON: (nodes, edges, filename = 'dag.json') => {
+  exportToJSON: (nodes, edges, filename = "dag.json") => {
     const dagData = {
       nodes,
       edges,
       metadata: {
         exportedAt: new Date().toISOString(),
-        version: '1.0',
+        version: "1.0",
         nodeCount: nodes.length,
-        edgeCount: edges.length
-      }
+        edgeCount: edges.length,
+      },
     };
-    
-    const blob = new Blob([JSON.stringify(dagData, null, 2)], { 
-      type: 'application/json' 
+
+    const blob = new Blob([JSON.stringify(dagData, null, 2)], {
+      type: "application/json",
     });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    
-    console.log('✅ JSON exportado:', filename);
+
+    console.log("✅ JSON exportado:", filename);
     return { success: true, filename, nodeCount: nodes.length };
   },
 
@@ -579,72 +736,79 @@ export const dagService = {
       edges,
       metadata: {
         copiedAt: new Date().toISOString(),
-        version: '1.0'
-      }
+        version: "1.0",
+      },
     };
-    
+
     try {
       await navigator.clipboard.writeText(JSON.stringify(dagData, null, 2));
-      console.log('✅ JSON copiado al portapapeles');
-      return { 
-        success: true, 
-        message: 'JSON copiado al portapapeles',
+      console.log("✅ JSON copiado al portapapeles");
+      return {
+        success: true,
+        message: "JSON copiado al portapapeles",
         nodeCount: nodes.length,
-        edgeCount: edges.length
+        edgeCount: edges.length,
       };
     } catch (error) {
-      console.error('❌ Error al copiar:', error);
+      console.error("❌ Error al copiar:", error);
       return { success: false, error: error.message };
     }
   },
 
   // 🐍 Exportar a Python (polimórfico por nodo raíz)
-  exportToPython: (nodes, edges, filename = 'dag.py', fallbackDagId = 'generated_dag') => {
+  exportToPython: (
+    nodes,
+    edges,
+    filename = "dag.py",
+    fallbackDagId = "generated_dag",
+  ) => {
     const workflowFramework = detectWorkflowRootFramework(nodes);
-    if (workflowFramework === 'airflow') {
+    if (workflowFramework === "airflow") {
       return exportAirflowToPython(nodes, edges, filename, fallbackDagId);
     }
-    if (workflowFramework === 'argo') {
+    if (workflowFramework === "argo") {
       return exportArgoToPythonTodo(nodes, edges, filename);
     }
-    throw new Error('No se encontró un nodo raíz válido (DAG o ArgoWorkflow) para exportar.');
+    throw new Error(
+      "No se encontró un nodo raíz válido (DAG o ArgoWorkflow) para exportar.",
+    );
   },
 
   // 📥 Importar desde JSON
   importFromFile: (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      
+
       reader.onload = (e) => {
         try {
           const dagData = JSON.parse(e.target.result);
-          
+
           if (!dagData.nodes || !dagData.edges) {
-            throw new Error('Formato de archivo inválido');
+            throw new Error("Formato de archivo inválido");
           }
-          
-          console.log('✅ DAG importado:', file.name);
+
+          console.log("✅ DAG importado:", file.name);
           resolve({
             success: true,
             data: dagData,
-            filename: file.name
+            filename: file.name,
           });
         } catch (error) {
-          console.error('❌ Error al importar:', error);
+          console.error("❌ Error al importar:", error);
           reject({
             success: false,
-            error: error.message
+            error: error.message,
           });
         }
       };
-      
+
       reader.onerror = () => {
         reject({
           success: false,
-          error: 'Error al leer el archivo'
+          error: "Error al leer el archivo",
         });
       };
-      
+
       reader.readAsText(file);
     });
   },
@@ -653,56 +817,61 @@ export const dagService = {
   validateDAG: (nodes, edges) => {
     const errors = [];
     const warnings = [];
-    
+
     // Verificar que hay nodos
     if (nodes.length === 0) {
-      errors.push('El DAG no contiene nodos');
+      errors.push("El DAG no contiene nodos");
       return { valid: false, errors, warnings };
     }
-    
+
     // Detectar ciclos
     const hasCycles = detectCycles(nodes, edges);
     if (hasCycles) {
-      errors.push('El DAG contiene ciclos (no es un grafo acíclico)');
+      errors.push("El DAG contiene ciclos (no es un grafo acíclico)");
     }
-    
+
     // Verificar nodos sin conexiones
-    const disconnectedNodes = nodes.filter(node => {
-      return !edges.some(e => e.source === node.id || e.target === node.id);
+    const disconnectedNodes = nodes.filter((node) => {
+      return !edges.some((e) => e.source === node.id || e.target === node.id);
     });
-    
+
     if (disconnectedNodes.length > 0) {
-      warnings.push(`${disconnectedNodes.length} nodo(s) aislado(s): ${
-        disconnectedNodes.map(n => n.data?.label || n.id).join(', ')
-      }`);
+      warnings.push(
+        `${disconnectedNodes.length} nodo(s) aislado(s): ${disconnectedNodes
+          .map((n) => n.data?.label || n.id)
+          .join(", ")}`,
+      );
     }
-    
+
     // Verificar nodos sin etiqueta
-    const nodesWithoutLabel = nodes.filter(n => !n.data?.label);
+    const nodesWithoutLabel = nodes.filter((n) => !n.data?.label);
     if (nodesWithoutLabel.length > 0) {
       warnings.push(`${nodesWithoutLabel.length} nodo(s) sin etiqueta`);
     }
-    
+
     const valid = errors.length === 0;
-    
-    console.log(valid ? '✅ DAG válido' : '❌ DAG inválido', { errors, warnings });
-    
+
+    console.log(valid ? "✅ DAG válido" : "❌ DAG inválido", {
+      errors,
+      warnings,
+    });
+
     return { valid, errors, warnings };
   },
 
   // 💾 Guardar en backend
-  saveToBackend: async (nodes, edges, dagName = 'Untitled DAG') => {
+  saveToBackend: async (nodes, edges, dagName = "Untitled DAG") => {
     const dagData = {
       name: dagName,
       nodes,
       edges,
       metadata: {
         savedAt: new Date().toISOString(),
-        version: '1.0'
-      }
+        version: "1.0",
+      },
     };
-    
-    return await apiService.post('/dags/save', dagData);
+
+    return await apiService.post("/dags/save", dagData);
   },
 
   // 📂 Cargar desde backend
@@ -712,8 +881,8 @@ export const dagService = {
 
   // 📋 Listar DAGs guardados
   listDAGs: async () => {
-    return await apiService.get('/dags/list');
-  }
+    return await apiService.get("/dags/list");
+  },
 };
 
 // ============== UTILIDADES ==============
@@ -722,24 +891,24 @@ export const dagService = {
 function detectCycles(nodes, edges) {
   const visited = new Set();
   const recursionStack = new Set();
-  
+
   const adjacencyList = {};
-  nodes.forEach(node => {
+  nodes.forEach((node) => {
     adjacencyList[node.id] = [];
   });
-  
-  edges.forEach(edge => {
+
+  edges.forEach((edge) => {
     if (adjacencyList[edge.source]) {
       adjacencyList[edge.source].push(edge.target);
     }
   });
-  
+
   const hasCycleDFS = (nodeId) => {
     visited.add(nodeId);
     recursionStack.add(nodeId);
-    
+
     const neighbors = adjacencyList[nodeId] || [];
-    
+
     for (const neighbor of neighbors) {
       if (!visited.has(neighbor)) {
         if (hasCycleDFS(neighbor)) {
@@ -749,11 +918,11 @@ function detectCycles(nodes, edges) {
         return true;
       }
     }
-    
+
     recursionStack.delete(nodeId);
     return false;
   };
-  
+
   for (const node of nodes) {
     if (!visited.has(node.id)) {
       if (hasCycleDFS(node.id)) {
@@ -761,7 +930,7 @@ function detectCycles(nodes, edges) {
       }
     }
   }
-  
+
   return false;
 }
 
@@ -771,48 +940,48 @@ export class DAGLogger {
     this.logs = [];
     this.maxLogs = 100;
   }
-  
+
   log(action, status, details = {}) {
     const logEntry = {
       timestamp: new Date().toISOString(),
       action,
       status,
-      ...details
+      ...details,
     };
-    
+
     this.logs.unshift(logEntry);
-    
+
     if (this.logs.length > this.maxLogs) {
       this.logs.pop();
     }
-    
+
     // Guardar en localStorage
     try {
-      localStorage.setItem('dag_logs', JSON.stringify(this.logs.slice(0, 50)));
+      localStorage.setItem("dag_logs", JSON.stringify(this.logs.slice(0, 50)));
     } catch (e) {
-      console.warn('No se pudo guardar el log en localStorage');
+      console.warn("No se pudo guardar el log en localStorage");
     }
-    
+
     return logEntry;
   }
-  
+
   getLogs() {
     return this.logs;
   }
-  
+
   clearLogs() {
     this.logs = [];
-    localStorage.removeItem('dag_logs');
+    localStorage.removeItem("dag_logs");
   }
-  
+
   loadLogs() {
     try {
-      const saved = localStorage.getItem('dag_logs');
+      const saved = localStorage.getItem("dag_logs");
       if (saved) {
         this.logs = JSON.parse(saved);
       }
     } catch (e) {
-      console.warn('No se pudo cargar logs desde localStorage');
+      console.warn("No se pudo cargar logs desde localStorage");
     }
   }
 }
@@ -825,5 +994,5 @@ dagLogger.loadLogs();
 export default {
   api: apiService,
   dag: dagService,
-  logger: dagLogger
+  logger: dagLogger,
 };
