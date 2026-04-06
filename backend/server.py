@@ -9,6 +9,7 @@ from routes.templates import templates_bp
 from routes.categories import categories_bp
 from routes.styles import styles_bp
 from routes.user_preferences import user_preferences_bp
+from routes.ai_chat import ai_chat_bp
 
 load_dotenv()
 
@@ -27,6 +28,7 @@ app.register_blueprint(templates_bp, url_prefix='/api')
 app.register_blueprint(categories_bp, url_prefix='/api')
 app.register_blueprint(styles_bp, url_prefix='/api')
 app.register_blueprint(user_preferences_bp, url_prefix='/api')
+app.register_blueprint(ai_chat_bp, url_prefix='/api')
 
 @app.route('/', methods=['GET'])
 def main():

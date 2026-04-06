@@ -103,4 +103,8 @@ export const userPreferencesAPI = {
   update: (data) => apiClient.put('/user/preferences', data),
 };
 
+export const aiAPI = {
+  chat: (data) => apiClient.post('/ai/chat', data),
+};
+
 export default apiClient;

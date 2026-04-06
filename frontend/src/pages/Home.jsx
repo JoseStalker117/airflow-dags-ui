@@ -3,16 +3,18 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import TopBar from "../components/TopBar";
 import BlockPalette from "../components/BlockPalette";
 import DagCanvas from "../components/DagCanvas";
+import AIChatPanel from "../components/AIChatPanel";
 import AdminTasksPanel from "../components/AdminTasksPanel";
 import AdminTemplatesPanel from "../components/AdminTemplatesPanel";
 import AdminCategoriesPanel from "../components/AdminCategoriesPanel";
 import { clearCanvasState, saveCanvasState, loadCanvasState } from "../utils/storage";
 import { saveUserPreferences, loadUserPreferences } from "../utils/storage";
 import { dagService, dagLogger } from "../services/dagService";
+import { applyAiActions } from "../services/aiActionExecutor";
 import { useAuth } from "../context/AuthContext";
 
 export default function Home() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, currentUser } = useAuth();
   const canvasRef = useRef(null);
   const paletteRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -29,6 +31,10 @@ export default function Home() {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isTemplateAdminOpen, setIsTemplateAdminOpen] = useState(false);
   const [isCategoryAdminOpen, setIsCategoryAdminOpen] = useState(false);
+  const [isAiChatOpen, setIsAiChatOpen] = useState(() => {
+    const saved = loadUserPreferences();
+    return saved?.isAiChatOpen ?? true;
+  });
 
   // ============== HELPERS ==============
   
@@ -338,8 +344,8 @@ Estado actual:
   // ============== GUARDAR PREFERENCIAS ==============
   
   useEffect(() => {
-    saveUserPreferences({ paletteWidth });
-  }, [paletteWidth]);
+    saveUserPreferences({ paletteWidth, isAiChatOpen });
+  }, [paletteWidth, isAiChatOpen]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -389,6 +395,44 @@ Estado actual:
       document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [isResizing]);
+
+  const getAiContext = useCallback(() => {
+    const { nodes, edges } = getCanvasData();
+    const root = (nodes || []).find((node) => ["DAG", "ArgoWorkflow"].includes(node?.data?.type));
+    const framework =
+      root?.data?.type === "ArgoWorkflow"
+        ? "argo"
+        : root?.data?.type === "DAG"
+          ? "airflow"
+          : null;
+
+    return {
+      user: {
+        uid: currentUser?.uid || null,
+        isAnonymous: !!currentUser?.isAnonymous,
+      },
+      app: {
+        name: "DAGGER",
+        frameworkHint: framework,
+        constraints: [
+          "Solo un nodo raíz DAG/ArgoWorkflow por flujo",
+          "No mezclar Airflow y Argo en el mismo flujo",
+          "Evitar ciclos en conexiones",
+        ],
+      },
+      flow: {
+        nodes: nodes || [],
+        edges: edges || [],
+      },
+    };
+  }, [getCanvasData, currentUser?.uid, currentUser?.isAnonymous]);
+
+  const handleApplyAiActions = useCallback((actions = []) => {
+    const current = getCanvasData();
+    const next = applyAiActions(current.nodes || [], current.edges || [], actions);
+    setCanvasData(next.nodes || [], next.edges || []);
+    return { applied: true, nodes: next.nodes?.length || 0, edges: next.edges?.length || 0 };
+  }, [getCanvasData, setCanvasData]);
 
   // ============== RENDER ==============
   
@@ -531,6 +575,16 @@ Estado actual:
         <div className="flex-1 min-w-0">
           <DagCanvas ref={canvasRef} />
         </div>
+
+        {!isMobileLayout && (
+          <AIChatPanel
+            isOpen={isAiChatOpen}
+            onToggle={() => setIsAiChatOpen((prev) => !prev)}
+            getContext={getAiContext}
+            onApplyActions={handleApplyAiActions}
+            onNotify={showNotif}
+          />
+        )}
       </div>
     </motion.div>
   );
