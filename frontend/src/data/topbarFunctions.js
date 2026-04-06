@@ -26,11 +26,11 @@ const baseTopbarGroups = [
         shortcut: "Ctrl+S"
       },
       {
-        id: "saveAs",
-        label: "Guardar Como...",
-        icon: "save_as",
-        action: "saveAsDag",
-        shortcut: "Ctrl+Shift+S"
+        id: "templates",
+        label: "Plantillas",
+        icon: "dashboard_customize",
+        action: "openTemplates",
+        shortcut: ""
       }
     ]
   },
@@ -123,6 +123,20 @@ const adminTopbarGroup = {
       label: "Administrar Tasks",
       icon: "widgets",
       action: "openTaskAdmin",
+      shortcut: ""
+    },
+    {
+      id: "manageTemplates",
+      label: "Administrar Plantillas",
+      icon: "dashboard_customize",
+      action: "openTemplateAdmin",
+      shortcut: ""
+    },
+    {
+      id: "manageCategories",
+      label: "Organizar Categorías",
+      icon: "category",
+      action: "openCategoryAdmin",
       shortcut: ""
     }
   ]

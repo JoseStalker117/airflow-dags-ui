@@ -73,4 +73,34 @@ export const taskAPI = {
   delete: (id) => apiClient.delete(`/tasks/${id}`)
 };
 
+export const templateAPI = {
+  getAll: (config = {}) => apiClient.get('/templates', config),
+  getAllAdmin: (config = {}) => apiClient.get('/admin/templates', config),
+  getById: (id) => apiClient.get(`/templates/${id}`),
+  create: (data) => apiClient.post('/templates', data),
+  update: (id, data) => apiClient.put(`/templates/${id}`, data),
+  delete: (id) => apiClient.delete(`/templates/${id}`)
+};
+
+export const categoryAPI = {
+  getAll: (config = {}) => apiClient.get('/categories', config),
+  getAllAdmin: (config = {}) => apiClient.get('/admin/categories', config),
+  create: (id, data) => apiClient.post(`/categories/${id}`, data),
+  update: (id, data) => apiClient.put(`/categories/${id}`, data),
+  delete: (id) => apiClient.delete(`/categories/${id}`)
+};
+
+export const styleAPI = {
+  getAll: (config = {}) => apiClient.get('/styles', config),
+  getAllAdmin: (config = {}) => apiClient.get('/admin/styles', config),
+  create: (id, data) => apiClient.post(`/styles/${id}`, data),
+  update: (id, data) => apiClient.put(`/styles/${id}`, data),
+  delete: (id) => apiClient.delete(`/styles/${id}`),
+};
+
+export const userPreferencesAPI = {
+  get: (config = {}) => apiClient.get('/user/preferences', config),
+  update: (data) => apiClient.put('/user/preferences', data),
+};
+
 export default apiClient;

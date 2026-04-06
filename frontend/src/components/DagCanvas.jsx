@@ -23,6 +23,13 @@ import {
   reconnectBranch,
   cleanupMovedNodeConnections,
 } from "./dagCanvas/edgeReconnection";
+import {
+  fetchCategories,
+  buildCategoryMetaMap,
+  getCategoryColorHex,
+  getCategoryColorKey,
+  getColorHexByKey,
+} from "../services/categoriesService";
 
 // Tipos definidos fuera del componente
 const edgeTypes = {};
@@ -80,13 +87,47 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
   const [dropZonePreview, setDropZonePreview] = useState(null); // { nodeId, zone: 'above' | 'below' }
   const [notification, setNotification] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
+  const [categoryMetaMap, setCategoryMetaMap] = useState({});
   const isInitializedRef = useRef(false);
   const saveTimeoutRef = useRef(null);
   const reactFlowInstance = useRef(null);
 
+  const enrichNodeWithCategoryColor = useCallback(
+    (node) => {
+      const categoryId = node?.data?.category;
+      const colorKey = categoryId
+        ? getCategoryColorKey(categoryId, categoryMetaMap)
+        : node?.data?.categoryColorKey || "slate";
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          categoryColorKey: colorKey,
+        },
+      };
+    },
+    [categoryMetaMap],
+  );
+
   const showNotification = useCallback((message, type = "info") => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCategories()
+      .then((categories) => {
+        if (cancelled) return;
+        setCategoryMetaMap(buildCategoryMetaMap(categories));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCategoryMetaMap({});
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleNodeDelete = useCallback(
@@ -108,24 +149,27 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
     getEdges: () => initialEdges,
     getPayloadForBackend: () => getCanvasPayloadForBackend(initialNodes, initialEdges),
     setCanvasData: (nodes, edges) => {
-      const withCallbacks = (nodes || []).map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          onUpdate: (updatedData) => {
-            setInitialNodes((prev) =>
-              prev.map((n) =>
-                n.id === node.id ? { ...n, data: { ...n.data, ...updatedData } } : n
-              )
-            );
+      const withCallbacks = (nodes || []).map((node) => {
+        const enrichedNode = enrichNodeWithCategoryColor(node);
+        return {
+          ...enrichedNode,
+          data: {
+            ...enrichedNode.data,
+            onUpdate: (updatedData) => {
+              setInitialNodes((prev) =>
+                prev.map((n) =>
+                  n.id === node.id ? { ...n, data: { ...n.data, ...updatedData } } : n
+                )
+              );
+            },
+            onDelete: handleNodeDelete,
           },
-          onDelete: handleNodeDelete,
-        },
-      }));
+        };
+      });
       setInitialNodes(sortNodesWithDAGFirst(withCallbacks));
       setInitialEdges(edges || []);
     },
-  }), [initialNodes, initialEdges, handleNodeDelete]);
+  }), [initialNodes, initialEdges, handleNodeDelete, enrichNodeWithCategoryColor]);
 
   useEffect(() => {
     if (isInitializedRef.current) return;
@@ -133,22 +177,25 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
     const savedState = loadCanvasState();
 
     if (savedState?.nodes?.length > 0) {
-      const restoredNodes = savedState.nodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          onUpdate: (updatedData) => {
-            setInitialNodes((prev) =>
-              prev.map((n) =>
-                n.id === node.id
-                  ? { ...n, data: { ...n.data, ...updatedData } }
-                  : n,
-              ),
-            );
+      const restoredNodes = savedState.nodes.map((node) => {
+        const enrichedNode = enrichNodeWithCategoryColor(node);
+        return {
+          ...enrichedNode,
+          data: {
+            ...enrichedNode.data,
+            onUpdate: (updatedData) => {
+              setInitialNodes((prev) =>
+                prev.map((n) =>
+                  n.id === node.id
+                    ? { ...n, data: { ...n.data, ...updatedData } }
+                    : n,
+                ),
+              );
+            },
+            onDelete: handleNodeDelete,
           },
-          onDelete: handleNodeDelete,
-        },
-      }));
+        };
+      });
       setInitialNodes(sortNodesWithDAGFirst(restoredNodes));
       setInitialEdges(savedState.edges || []);
       showNotification("Estado cargado correctamente", "success");
@@ -158,7 +205,13 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
     }
 
     isInitializedRef.current = true;
-  }, [handleNodeDelete, showNotification]);
+  }, [handleNodeDelete, showNotification, enrichNodeWithCategoryColor]);
+
+  useEffect(() => {
+    if (!isInitializedRef.current) return;
+    if (!initialNodes.length) return;
+    setInitialNodes((prev) => prev.map((node) => enrichNodeWithCategoryColor(node)));
+  }, [categoryMetaMap, enrichNodeWithCategoryColor]);
 
   const onNodesChangeWithDAGProtection = useCallback(
     (changes) => {
@@ -390,6 +443,7 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
           ...data,
           id: newNodeId,
           task_id: newTaskId,
+          categoryColorKey: getCategoryColorKey(data.category, categoryMetaMap),
           // Mostrar parámetros automáticamente al crear un nuevo nodo
           showParameters: true,
           // Guardar definiciones de parámetros para poder editarlos
@@ -745,6 +799,7 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
       hasOutgoingEdge,
       hasIncomingEdge,
       showNotification,
+      categoryMetaMap,
     ],
   );
 
@@ -1386,30 +1441,14 @@ const DagCanvas = forwardRef(function DagCanvas(_, ref) {
               position="top-right"
             />
             <MiniMap
-                nodeColor={(node) => {
-                const typeColorMap = {
-                  DAG: "#6366f1",
-                  ArgoWorkflow: "#8b5cf6",
-                  BashOperator: "#6ee7b7",
-                  PythonOperator: "#93c5fd",
-                  PythonVirtualenvOperator: "#a5b4fc",
-                  PostgresOperator: "#67e8f9",
-                  BigQueryOperator: "#c4b5fd",
-                  SQLExecuteQueryOperator: "#5eead4",
-                  LocalFilesystemToS3Operator: "#fdba74",
-                  S3ToS3Operator: "#fcd34d",
-                  SFTPOperator: "#7dd3fc",
-                  GCSToBigQueryOperator: "#c4b5fd",
-                  FileSensor: "#f9a8d4",
-                  S3KeySensor: "#fda4af",
-                  SqlSensor: "#86efac",
-                  HttpSensor: "#fca5a5",
-                  DummyOperator: "#d1d5db",
-                  BranchPythonOperator: "#fde047",
-                  ShortCircuitOperator: "#fcd34d",
-                };
-                const operatorType = node.data?.type;
-                return typeColorMap[operatorType] || "#cbd5e1";
+              nodeColor={(node) => {
+                if (node?.data?.category) {
+                  return getCategoryColorHex(node.data.category, categoryMetaMap);
+                }
+                if (node?.data?.categoryColorKey) {
+                  return getColorHexByKey(node.data.categoryColorKey);
+                }
+                return "#cbd5e1";
               }}
               maskColor="rgba(0, 0, 0, 0.1)"
               position="bottom-right"

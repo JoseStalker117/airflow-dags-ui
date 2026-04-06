@@ -1,10 +1,7 @@
 import { Handle, Position } from "reactflow";
 import { useState, useEffect } from "react";
-import {
-  getOperatorNodeStyle,
-  NODE_COLOR_CLASSES,
-  NODE_BORDER_COLOR_CLASSES,
-} from "../config/taskUiConfig";
+import { getOperatorNodeStyle } from "../config/taskUiConfig";
+import { getColorHexByKey } from "../services/categoriesService";
 
 /**
  * Nodo personalizado para el canvas de React Flow
@@ -38,6 +35,20 @@ export default function DagFlowNode({ data }) {
   }, [data.task_id, localParameters.task_id]);
 
   const operatorInfo = getOperatorNodeStyle(data.type);
+  const categoryColorKey = data.categoryColorKey || "slate";
+  const accentColor = getColorHexByKey(categoryColorKey);
+  const toRgba = (hex, alpha) => {
+    if (!hex || typeof hex !== "string" || !hex.startsWith("#") || hex.length !== 7) {
+      return hex;
+    }
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
+  const nodeBorderColor = toRgba(accentColor, 0.45);
+  const nodeSoftBg = toRgba(accentColor, 0.08);
+  const dagHeaderBorder = toRgba(accentColor, 0.28);
 
   const paramCount = localParameters
     ? Object.keys(localParameters).filter(
@@ -263,18 +274,21 @@ export default function DagFlowNode({ data }) {
 
   return (
     <div
-      className={`bg-white rounded-lg shadow-lg border-2 ${NODE_BORDER_COLOR_CLASSES[operatorInfo.color]} 
+      className={`bg-white rounded-lg shadow-lg border-2
                     hover:shadow-xl transition-all ${isDAG ? "min-w-[280px] sm:min-w-[400px] md:min-w-[500px]" : "min-w-[280px]"}
-                    ${isDAG ? "bg-gradient-to-br from-indigo-50 to-purple-50" : ""}
                     ${isDAG ? "w-full max-w-full" : ""}`}
+      style={{
+        borderColor: nodeBorderColor,
+        backgroundColor: isDAG ? nodeSoftBg : "#ffffff",
+      }}
     >
       {/* Handle superior (entrada) - NO se muestra para nodos DAG */}
       {!isDAG && (
         <Handle
           type="target"
           position={Position.Top}
-          className="w-4 h-4 !bg-slate-500 hover:!bg-blue-500 !border-2 !border-white transition-colors"
-          style={{ width: "16px", height: "16px", borderRadius: "50%" }}
+          className="w-4 h-4 !border-2 !border-white transition-colors"
+          style={{ width: "16px", height: "16px", borderRadius: "50%", backgroundColor: accentColor }}
         />
       )}
 
@@ -283,10 +297,11 @@ export default function DagFlowNode({ data }) {
         {isDAG ? (
           /* Header especial para DAG */
           <>
-            <div className="border-b-2 border-indigo-200 pb-3 mb-3">
+            <div className="pb-3 mb-3 border-b-2" style={{ borderColor: dagHeaderBorder }}>
               <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-3">
                 <div
-                  className={`${NODE_COLOR_CLASSES[operatorInfo.color]} rounded-lg p-2 flex-shrink-0 self-start`}
+                  className="rounded-lg p-2 flex-shrink-0 self-start"
+                  style={{ backgroundColor: accentColor }}
                 >
                   <span className="material-symbols-outlined text-white text-base sm:text-lg">
                     {operatorInfo.icon}
@@ -348,7 +363,8 @@ export default function DagFlowNode({ data }) {
             <div className="flex items-start gap-2">
               {/* Icono del operador */}
               <div
-                className={`${NODE_COLOR_CLASSES[operatorInfo.color]} rounded-lg p-1.5 flex-shrink-0`}
+                className="rounded-lg p-1.5 flex-shrink-0"
+                style={{ backgroundColor: accentColor }}
               >
                 <span className="material-symbols-outlined text-white text-sm">
                   {operatorInfo.icon}
@@ -436,8 +452,8 @@ export default function DagFlowNode({ data }) {
           <Handle
             type="source"
             position={Position.Bottom}
-            className="!bg-indigo-500 hover:!bg-indigo-600 !border-2 !border-white transition-colors"
-            style={{ width: "16px", height: "16px", borderRadius: "50%" }}
+            className="!border-2 !border-white transition-colors"
+            style={{ width: "16px", height: "16px", borderRadius: "50%", backgroundColor: accentColor }}
           />
         </div>
       ) : isBranch ? (
@@ -471,8 +487,8 @@ export default function DagFlowNode({ data }) {
         <Handle
           type="source"
           position={Position.Bottom}
-          className="!bg-slate-500 hover:!bg-blue-500 !border-2 !border-white transition-colors"
-          style={{ width: "16px", height: "16px", borderRadius: "50%" }}
+          className="!border-2 !border-white transition-colors"
+          style={{ width: "16px", height: "16px", borderRadius: "50%", backgroundColor: accentColor }}
         />
       )}
     </div>

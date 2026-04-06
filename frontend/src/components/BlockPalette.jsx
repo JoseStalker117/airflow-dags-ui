@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { saveUserPreferences, loadUserPreferences } from "../utils/storage";
+import { useAuth } from "../context/AuthContext";
 import {
   fetchTaskBlocks,
   getBlocksForPalette,
@@ -8,26 +9,38 @@ import {
 } from "../services/tasksFromFirestore";
 import {
   FRAMEWORK_UI,
-  CATEGORY_ORDER_BY_FRAMEWORK,
-  CATEGORY_LABELS,
-  CATEGORY_ICONS,
-  getOperatorPaletteStyle,
 } from "../config/taskUiConfig";
+import {
+  fetchCategories,
+  buildCategoryMetaMap,
+  getCategoriesForFramework,
+  getCategoryChipClass,
+  getCategoryCardClass,
+  getCategoryColorHex,
+} from "../services/categoriesService";
+import {
+  fetchUserPreferences,
+  saveUserFavorites,
+} from "../services/userPreferencesService";
 
 const defaultExpandedCategories = { common: true };
 
 export default function BlockPalette() {
+  const { currentUser } = useAuth();
   const [selectedFramework, setSelectedFramework] = useState(() => {
     const prefs = loadUserPreferences();
     return prefs?.selectedFramework ?? "airflow";
   });
   const [allBlocks, setAllBlocks] = useState([]);
+  const [allCategories, setAllCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedCategories, setExpandedCategories] = useState(() => {
     const prefs = loadUserPreferences();
     return prefs?.expandedCategories ?? defaultExpandedCategories;
   });
+  const [userFavoriteTaskIds, setUserFavoriteTaskIds] = useState([]);
+  const [hasCustomFavorites, setHasCustomFavorites] = useState(false);
 
   // Cargar bloques desde Firestore (API)
   useEffect(() => {
@@ -35,8 +48,10 @@ export default function BlockPalette() {
     setLoading(true);
     setError(null);
     fetchTaskBlocks()
-      .then((blocks) => {
+      .then(async (blocks) => {
         if (!cancelled) setAllBlocks(blocks);
+        const categories = await fetchCategories();
+        if (!cancelled) setAllCategories(categories);
       })
       .catch((err) => {
         if (!cancelled) setError(err.message || "Error al cargar bloques");
@@ -51,9 +66,25 @@ export default function BlockPalette() {
     saveUserPreferences({ selectedFramework, expandedCategories });
   }, [selectedFramework, expandedCategories]);
 
-  const paletteData = getBlocksForPalette(allBlocks, selectedFramework);
-  const categoryOrder =
-    CATEGORY_ORDER_BY_FRAMEWORK[selectedFramework] ?? Object.keys(CATEGORY_LABELS);
+  const categoryMetaMap = buildCategoryMetaMap(allCategories);
+  const defaultFavoriteTaskIds = Array.from(
+    new Set(
+      (allBlocks || [])
+        .filter((block) => {
+          const cat = block.category || "others";
+          return !!block.isDefaultFavorite || !!categoryMetaMap[cat]?.showInDefaultFavorites;
+        })
+        .map((block) => String(block.id || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const paletteData = getBlocksForPalette(allBlocks, selectedFramework, {
+    categoryMetaMap,
+    userFavoriteTaskIds,
+    hasCustomFavorites,
+  });
+  const categoryOrderBase = getCategoriesForFramework(allCategories, selectedFramework).map((item) => item.id);
+  const categoryOrder = ["common", ...categoryOrderBase.filter((item) => item !== "common")];
   const orderedCategories = [
     ...categoryOrder.filter((c) => paletteData[c]?.length),
     ...Object.keys(paletteData).filter((c) => !categoryOrder.includes(c)),
@@ -68,6 +99,59 @@ export default function BlockPalette() {
 
   const handleDragStart = (e, block) => {
     e.dataTransfer.setData("block", JSON.stringify(block));
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const uid = currentUser?.uid;
+    if (!uid) {
+      setUserFavoriteTaskIds([]);
+      setHasCustomFavorites(false);
+      return;
+    }
+
+    fetchUserPreferences(uid)
+      .then((prefs) => {
+        if (cancelled) return;
+        setUserFavoriteTaskIds(Array.isArray(prefs?.favoriteTaskIds) ? prefs.favoriteTaskIds : []);
+        setHasCustomFavorites(!!prefs?.hasCustomFavorites);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUserFavoriteTaskIds([]);
+        setHasCustomFavorites(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.uid]);
+
+  const handleToggleFavorite = async (event, block) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!currentUser?.uid) return;
+
+    const taskId = String(block?.id || "").trim();
+    if (!taskId) return;
+
+    const prevIds = hasCustomFavorites ? userFavoriteTaskIds : defaultFavoriteTaskIds;
+    const exists = prevIds.includes(taskId);
+    const nextIds = exists
+      ? prevIds.filter((id) => id !== taskId)
+      : [...prevIds, taskId];
+    const prevCustomFavorites = hasCustomFavorites;
+
+    setUserFavoriteTaskIds(nextIds);
+    setHasCustomFavorites(true);
+
+    try {
+      await saveUserFavorites(currentUser?.uid, nextIds);
+    } catch {
+      setUserFavoriteTaskIds(prevIds);
+      setHasCustomFavorites(prevCustomFavorites);
+    }
   };
 
   return (
@@ -131,10 +215,15 @@ export default function BlockPalette() {
                 >
                   <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-base">
-                      {CATEGORY_ICONS[category] ?? "folder"}
+                      {categoryMetaMap[category]?.icon ?? (category === "common" ? "star" : "folder")}
                     </span>
-                    <span>{CATEGORY_LABELS[category] ?? category}</span>
-                    <span className="text-xs text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded">
+                    <span>{categoryMetaMap[category]?.label ?? (category === "common" ? "Favoritos" : category)}</span>
+                    <span
+                      className={`text-xs px-1.5 py-0.5 rounded border ${getCategoryChipClass(
+                        category,
+                        categoryMetaMap,
+                      )}`}
+                    >
                       {blocks.length}
                     </span>
                   </div>
@@ -157,21 +246,28 @@ export default function BlockPalette() {
                     >
                       <div className="ml-4 mt-1 space-y-1 pb-2">
                         {blocks.map((block) => {
-                          const style = getOperatorPaletteStyle(block.type);
+                          const taskCategory = block.category || category || "others";
+                          const taskCardStyle = getCategoryCardClass(taskCategory, categoryMetaMap);
+                          const taskAccentColor = getCategoryColorHex(taskCategory, categoryMetaMap);
+                          const taskId = String(block?.id || "").trim();
+                          const isFavFromUser = userFavoriteTaskIds.includes(taskId);
+                          const isFavDefault = !!block.isDefaultFavorite || !!categoryMetaMap[taskCategory]?.showInDefaultFavorites;
+                          const isFavorite = hasCustomFavorites ? isFavFromUser : isFavDefault;
                           return (
                             <div
                               key={block.id}
                               draggable
                               onDragStart={(e) => handleDragStart(e, block)}
                               className={`bg-white p-3 rounded-md shadow-sm cursor-grab active:cursor-grabbing
-                                         hover:shadow-md border-l-4 ${style.borderClass} ${style.hoverClass}
+                                         hover:shadow-md border-l-4 ${taskCardStyle}
                                          border border-gray-100 hover:border-gray-200
                                          transition-all group`}
                               title={block.description}
                             >
                               <div className="flex items-start gap-2">
                                 <span
-                                  className={`material-symbols-outlined text-base ${style.iconClass}`}
+                                  className="material-symbols-outlined text-base"
+                                  style={{ color: taskAccentColor }}
                                 >
                                   {block.icon}
                                 </span>
@@ -183,6 +279,20 @@ export default function BlockPalette() {
                                     {block.type}
                                   </div>
                                 </div>
+                                <button
+                                  type="button"
+                                  onClick={(event) => handleToggleFavorite(event, block)}
+                                  className={`h-7 w-7 rounded-md border flex items-center justify-center transition ${
+                                    isFavorite
+                                      ? "border-amber-300 bg-amber-50 text-amber-600"
+                                      : "border-slate-300 bg-white text-slate-400 hover:bg-slate-100"
+                                  }`}
+                                  title={isFavorite ? "Quitar de favoritos" : "Agregar a favoritos"}
+                                >
+                                  <span className="material-symbols-outlined text-[16px]">
+                                    {isFavorite ? "star" : "star_outline"}
+                                  </span>
+                                </button>
                               </div>
                             </div>
                           );

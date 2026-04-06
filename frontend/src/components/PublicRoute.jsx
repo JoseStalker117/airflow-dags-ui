@@ -38,8 +38,9 @@ const PublicRoute = ({ children }) => {
     );
   }
 
-  // Si ya está autenticado, redirigir a home
-  if (currentUser) {
+  // Si ya está autenticado con una cuenta real, redirigir a splash.
+  // Las sesiones anónimas sí deben poder entrar a /login para autenticarse.
+  if (currentUser && !currentUser.isAnonymous) {
     return <Navigate to="/splash" replace />;
   }
 

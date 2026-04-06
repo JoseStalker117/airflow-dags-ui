@@ -5,6 +5,10 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from routes.auth import auth_bp
 from routes.tasks import tasks_bp
+from routes.templates import templates_bp
+from routes.categories import categories_bp
+from routes.styles import styles_bp
+from routes.user_preferences import user_preferences_bp
 
 load_dotenv()
 
@@ -19,6 +23,10 @@ CORS(app, origins=allowed_origins if allowed_origins else "*")
 # Registrar blueprints
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(tasks_bp, url_prefix='/api')
+app.register_blueprint(templates_bp, url_prefix='/api')
+app.register_blueprint(categories_bp, url_prefix='/api')
+app.register_blueprint(styles_bp, url_prefix='/api')
+app.register_blueprint(user_preferences_bp, url_prefix='/api')
 
 @app.route('/', methods=['GET'])
 def main():

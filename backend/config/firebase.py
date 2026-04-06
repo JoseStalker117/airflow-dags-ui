@@ -46,6 +46,7 @@ db = firestore.client()
 # Configuración JWT
 JWT_SECRET = os.getenv('JWT_SECRET_KEY')
 JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
+JWT_EXPIRATION_HOURS = 10
 if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET_KEY no está definido")
 
@@ -56,7 +57,7 @@ def create_jwt_token(uid, email, is_admin=False, is_anonymous=False):
         'email': email,
         'admin': is_admin,
         'isAnonymous': is_anonymous,
-        'exp': datetime.utcnow() + timedelta(days=7),  # Token válido por 7 días
+        'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),  # Token válido por 10 horas
         'iat': datetime.utcnow()
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)

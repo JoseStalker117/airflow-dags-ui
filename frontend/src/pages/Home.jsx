@@ -4,6 +4,8 @@ import TopBar from "../components/TopBar";
 import BlockPalette from "../components/BlockPalette";
 import DagCanvas from "../components/DagCanvas";
 import AdminTasksPanel from "../components/AdminTasksPanel";
+import AdminTemplatesPanel from "../components/AdminTemplatesPanel";
+import AdminCategoriesPanel from "../components/AdminCategoriesPanel";
 import { clearCanvasState, saveCanvasState, loadCanvasState } from "../utils/storage";
 import { saveUserPreferences, loadUserPreferences } from "../utils/storage";
 import { dagService, dagLogger } from "../services/dagService";
@@ -25,6 +27,8 @@ export default function Home() {
   const [isMobileLayout, setIsMobileLayout] = useState(() => window.innerWidth < 1024);
   const [isPaletteOpen, setIsPaletteOpen] = useState(() => window.innerWidth >= 1024);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isTemplateAdminOpen, setIsTemplateAdminOpen] = useState(false);
+  const [isCategoryAdminOpen, setIsCategoryAdminOpen] = useState(false);
 
   // ============== HELPERS ==============
   
@@ -131,20 +135,6 @@ export default function Home() {
               error: error.message,
               message: 'Solo guardado local' 
             });
-          }
-          break;
-
-        case "saveAsDag":
-          const dagName = prompt("Nombre del DAG:", `dag_${Date.now()}`);
-          if (dagName) {
-            const result = await dagService.saveToBackend(nodes, edges, dagName);
-            if (result.success) {
-              showNotif(`✅ Guardado como: ${dagName}`);
-              dagLogger.log('saveAsDag', 'success', { dagName });
-            } else {
-              showNotif(`❌ Error: ${result.error}`, 'error');
-              dagLogger.log('saveAsDag', 'error', { error: result.error });
-            }
           }
           break;
 
@@ -259,6 +249,22 @@ Estado actual:
           setIsAdminPanelOpen(true);
           break;
 
+        case "openTemplateAdmin":
+          if (!isAdmin) {
+            showNotif("❌ Esta opción requiere admin", "error");
+            break;
+          }
+          setIsTemplateAdminOpen(true);
+          break;
+
+        case "openCategoryAdmin":
+          if (!isAdmin) {
+            showNotif("❌ Esta opción requiere admin", "error");
+            break;
+          }
+          setIsCategoryAdminOpen(true);
+          break;
+
         default:
           console.log(`Acción no reconocida: ${action}`);
           dagLogger.log(action, 'pending', { 
@@ -271,6 +277,31 @@ Estado actual:
       dagLogger.log(action, 'error', { error: error.message });
     }
   }, [getCanvasData, setCanvasData, showNotif, isAdmin]);
+
+  const handleTemplateSelect = useCallback((template) => {
+    const { nodes, edges } = getCanvasData();
+    const hasExistingFlow = (nodes?.length || 0) > 0 || (edges?.length || 0) > 0;
+
+    if (hasExistingFlow) {
+      const confirmed = window.confirm(
+        `El flow actual será reemplazado por la plantilla "${template.name || template.id}". ¿Deseas continuar?`,
+      );
+      if (!confirmed) return;
+    }
+
+    const templateNodes = Array.isArray(template?.nodes) ? template.nodes : [];
+    const templateEdges = Array.isArray(template?.edges) ? template.edges : [];
+
+    setCanvasData(templateNodes, templateEdges);
+    saveCanvasState(templateNodes, templateEdges);
+    showNotif(`✅ Plantilla cargada: ${template.name || template.id}`);
+    dagLogger.log("loadTemplate", "success", {
+      templateId: template.id,
+      framework: template.framework,
+      nodeCount: templateNodes.length,
+      edgeCount: templateEdges.length,
+    });
+  }, [getCanvasData, setCanvasData, showNotif]);
 
   // ============== IMPORTAR ARCHIVO ==============
   
@@ -412,12 +443,25 @@ Estado actual:
       </AnimatePresence>
 
       {/* TopBar */}
-      <TopBar onAction={handleTopBarAction} isAdmin={isAdmin} />
+      <TopBar onAction={handleTopBarAction} onTemplateSelect={handleTemplateSelect} isAdmin={isAdmin} />
 
       <AdminTasksPanel
         isOpen={isAdminPanelOpen}
         onClose={() => setIsAdminPanelOpen(false)}
         onSaved={() => showNotif("✅ Tasks actualizadas en Firestore")}
+      />
+
+      <AdminTemplatesPanel
+        isOpen={isTemplateAdminOpen}
+        onClose={() => setIsTemplateAdminOpen(false)}
+        onSaved={() => showNotif("✅ Plantillas actualizadas en Firestore")}
+        getCanvasData={getCanvasData}
+      />
+
+      <AdminCategoriesPanel
+        isOpen={isCategoryAdminOpen}
+        onClose={() => setIsCategoryAdminOpen(false)}
+        onSaved={() => showNotif("✅ Categorías actualizadas en Firestore")}
       />
 
       {/* Main Content */}

@@ -3,11 +3,13 @@ import { AnimatePresence } from "framer-motion";
 import { taskAPI } from "../services/api";
 import {
   ICON_OPTIONS,
-  CATEGORY_CARD_STYLES,
   FRAMEWORK_OPTIONS,
-  CATEGORY_OPTIONS,
-  CATEGORY_LABELS,
 } from "../config/taskUiConfig";
+import {
+  fetchCategories,
+  buildCategoryMetaMap,
+  getCategoryCardClass,
+} from "../services/categoriesService";
 
 const REQUIRED_FIELDS = [
   "id",
@@ -187,6 +189,7 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
   );
 
   const [tasks, setTasks] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -209,6 +212,8 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
       // para reducir consumo de lecturas en Firestore.
       const { data } = await taskAPI.getAllAdmin();
       setTasks(Array.isArray(data) ? data : []);
+      const categoriesData = await fetchCategories();
+      setCategories(Array.isArray(categoriesData) ? categoriesData : []);
     } catch (err) {
       setError(err.response?.data?.error || err.message || "No se pudieron cargar las tasks");
     } finally {
@@ -345,16 +350,22 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
   };
 
   const categoryOptions = useMemo(() => {
+    const activeCategories = (categories || [])
+      .filter((item) => item?.isActive !== false)
+      .map((item) => ({ value: item.id, label: item.label || item.id }));
+
     const dynamic = [...new Set(tasks.map((t) => t.category).filter(Boolean))].map((value) => ({
       value,
-      label: CATEGORY_LABELS[value] || value,
+      label: value,
     }));
-    const merged = [...CATEGORY_OPTIONS, ...dynamic];
+    const merged = [...activeCategories, ...dynamic];
     const unique = merged.filter(
       (option, index, arr) => arr.findIndex((item) => item.value === option.value) === index,
     );
     return unique.sort((a, b) => String(a.label).localeCompare(String(b.label)));
-  }, [tasks]);
+  }, [categories, tasks]);
+
+  const categoryMetaMap = useMemo(() => buildCategoryMetaMap(categories), [categories]);
 
   return (
     <AnimatePresence>
@@ -512,7 +523,7 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                               ? "border-blue-300 bg-blue-50"
                               : "border-slate-200 hover:bg-slate-100"
                           } border-l-4 ${
-                            CATEGORY_CARD_STYLES[task.category] || CATEGORY_CARD_STYLES.others
+                            getCategoryCardClass(task.category, categoryMetaMap)
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -520,7 +531,7 @@ export default function AdminTasksPanel({ isOpen, onClose, onSaved }) {
                               <p className="text-sm font-semibold text-slate-900 truncate">{task.id}</p>
                               <p className="text-xs text-slate-600 truncate">{task.name}</p>
                               <p className="text-[11px] text-slate-500 truncate">
-                                {task.framework} · {CATEGORY_LABELS[task.category] || task.category} · {task.type}
+                                {task.framework} · {categoryMetaMap[task.category]?.label || task.category} · {task.type}
                               </p>
                             </div>
                             <span
