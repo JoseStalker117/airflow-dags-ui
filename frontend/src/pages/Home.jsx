@@ -11,6 +11,7 @@ import { clearCanvasState, saveCanvasState, loadCanvasState } from "../utils/sto
 import { saveUserPreferences, loadUserPreferences } from "../utils/storage";
 import { dagService, dagLogger } from "../services/dagService";
 import { applyAiActions } from "../services/aiActionExecutor";
+import { fetchTaskBlocks, slimParameterSchema } from "../services/tasksFromFirestore";
 import { useAuth } from "../context/AuthContext";
 
 export default function Home() {
@@ -35,6 +36,21 @@ export default function Home() {
     const saved = loadUserPreferences();
     return saved?.isAiChatOpen ?? true;
   });
+  const [taskBlocks, setTaskBlocks] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchTaskBlocks()
+      .then((blocks) => {
+        if (!cancelled) setTaskBlocks(Array.isArray(blocks) ? blocks : []);
+      })
+      .catch((error) => {
+        console.warn("No se pudo cargar catálogo de tasks para IA:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ============== HELPERS ==============
   
@@ -396,15 +412,70 @@ Estado actual:
     };
   }, [isResizing]);
 
+  // Nodos/edges vivos del canvas (sin strip de campos) para IA
+  const getLiveCanvasData = useCallback(() => {
+    if (!canvasRef.current) return { nodes: [], edges: [] };
+    try {
+      if (canvasRef.current.getNodes && canvasRef.current.getEdges) {
+        return {
+          nodes: canvasRef.current.getNodes() || [],
+          edges: canvasRef.current.getEdges() || [],
+        };
+      }
+    } catch (error) {
+      console.warn("No se pudieron obtener nodos vivos del canvas:", error);
+    }
+    return getCanvasData();
+  }, [getCanvasData]);
+
   const getAiContext = useCallback(() => {
-    const { nodes, edges } = getCanvasData();
+    const { nodes, edges } = getLiveCanvasData();
     const root = (nodes || []).find((node) => ["DAG", "ArgoWorkflow"].includes(node?.data?.type));
     const framework =
-      root?.data?.type === "ArgoWorkflow"
+      root?.data?.framework ||
+      root?.data?.platform ||
+      (root?.data?.type === "ArgoWorkflow"
         ? "argo"
         : root?.data?.type === "DAG"
           ? "airflow"
-          : null;
+          : null);
+
+    const slimNodes = (nodes || []).map((node) => ({
+      id: node.id,
+      type: node.type || "dagNode",
+      position: node.position,
+      data: {
+        id: node.data?.id,
+        label: node.data?.label,
+        task_id: node.data?.task_id,
+        type: node.data?.type,
+        framework: node.data?.framework || node.data?.platform || null,
+        platform: node.data?.platform || node.data?.framework || null,
+        category: node.data?.category,
+        icon: node.data?.icon,
+        catalogId: node.data?.catalogId || null,
+        parameters: node.data?.parameters || {},
+        parameterSchema: slimParameterSchema(node.data?.parameterDefinitions || {}),
+      },
+    }));
+    const slimEdges = (edges || []).map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.sourceHandle ?? null,
+      targetHandle: edge.targetHandle ?? null,
+    }));
+
+    const availableTasks = (taskBlocks || [])
+      .filter((block) => !framework || block.framework === framework || block.platform === framework)
+      .slice(0, 80)
+      .map((block) => ({
+        id: block.id,
+        type: block.type,
+        label: block.label,
+        category: block.category,
+        framework: block.framework || block.platform || null,
+      }));
 
     return {
       user: {
@@ -414,25 +485,53 @@ Estado actual:
       app: {
         name: "DAGGER",
         frameworkHint: framework,
+        availableTasks,
         constraints: [
           "Solo un nodo raíz DAG/ArgoWorkflow por flujo",
           "No mezclar Airflow y Argo en el mismo flujo",
           "Evitar ciclos en conexiones",
+          "type visual del nodo: dagNode; operador en data.type",
+          "Para editar parámetros de una task usa update_node con data.parameters",
+          "Al crear nodos usa type/label de availableTasks para heredar parameterDefinitions",
         ],
       },
       flow: {
-        nodes: nodes || [],
-        edges: edges || [],
+        nodes: slimNodes,
+        edges: slimEdges,
       },
     };
-  }, [getCanvasData, currentUser?.uid, currentUser?.isAnonymous]);
+  }, [getLiveCanvasData, currentUser?.uid, currentUser?.isAnonymous, taskBlocks]);
 
-  const handleApplyAiActions = useCallback((actions = []) => {
-    const current = getCanvasData();
-    const next = applyAiActions(current.nodes || [], current.edges || [], actions);
-    setCanvasData(next.nodes || [], next.edges || []);
-    return { applied: true, nodes: next.nodes?.length || 0, edges: next.edges?.length || 0 };
-  }, [getCanvasData, setCanvasData]);
+  const handleApplyAiActions = useCallback(async (actions = []) => {
+    const current = getLiveCanvasData();
+    let blocks = taskBlocks;
+    if (!blocks.length) {
+      try {
+        blocks = await fetchTaskBlocks();
+        setTaskBlocks(Array.isArray(blocks) ? blocks : []);
+      } catch (error) {
+        console.warn("Catálogo de tasks no disponible al aplicar acciones IA:", error);
+        blocks = [];
+      }
+    }
+
+    const root = (current.nodes || []).find((node) =>
+      ["DAG", "ArgoWorkflow"].includes(node?.data?.type),
+    );
+    const framework =
+      root?.data?.framework ||
+      root?.data?.platform ||
+      (root?.data?.type === "ArgoWorkflow" ? "argo" : root?.data?.type === "DAG" ? "airflow" : null);
+
+    const next = applyAiActions(current.nodes || [], current.edges || [], actions, {
+      taskBlocks: blocks,
+      framework,
+    });
+    if (next.appliedActions > 0) {
+      setCanvasData(next.nodes || [], next.edges || []);
+    }
+    return next;
+  }, [getLiveCanvasData, setCanvasData, taskBlocks]);
 
   // ============== RENDER ==============
   

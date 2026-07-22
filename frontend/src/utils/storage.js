@@ -48,6 +48,8 @@ export const saveCanvasState = (nodesOrPayload, edges) => {
         category: node.data.category,
         description: node.data.description,
         task_id: node.data.task_id,
+        framework: node.data.framework,
+        platform: node.data.platform,
         importLiteral: node.data.importLiteral,
         imports: deepSerialize(node.data.imports || null),
         operatorImport: deepSerialize(node.data.operatorImport || null),
@@ -137,12 +139,15 @@ export const getCanvasPayloadForBackend = (nodes, edges) => {
       category: node.data?.category,
       description: node.data?.description,
       task_id: node.data?.task_id,
+      framework: node.data?.framework,
+      platform: node.data?.platform,
       importLiteral: node.data?.importLiteral,
       imports: deepSerialize(node.data?.imports || null),
       operatorImport: deepSerialize(node.data?.operatorImport || null),
       pythonImportLiteral: node.data?.pythonImportLiteral,
       parameters: deepSerialize(node.data?.parameters || {}),
       parameterDefinitions: deepSerialize(node.data?.parameterDefinitions || {}),
+      showParameters: Boolean(node.data?.showParameters),
     }
   }));
   const edgesList = edges.map(edge => ({

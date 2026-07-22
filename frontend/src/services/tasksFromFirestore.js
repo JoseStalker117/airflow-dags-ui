@@ -108,6 +108,81 @@ export function invalidateTaskBlocksCache() {
 }
 
 /**
+ * Busca un bloque de task en el catálogo (id, label o type + framework).
+ */
+export function findTaskBlock(blocks = [], criteria = {}) {
+  const list = Array.isArray(blocks) ? blocks : [];
+  const catalogId = String(criteria.catalogId || criteria.id || "").trim();
+  const label = String(criteria.label || "").trim().toLowerCase();
+  const type = String(criteria.type || "").trim();
+  const framework = String(criteria.framework || "").trim().toLowerCase();
+
+  const scoped = framework
+    ? list.filter((block) => {
+        const fw = String(block?.framework || block?.platform || "").toLowerCase();
+        return !fw || fw === framework;
+      })
+    : list;
+
+  if (catalogId) {
+    const byId = scoped.find((block) => String(block?.id || "") === catalogId)
+      || list.find((block) => String(block?.id || "") === catalogId);
+    if (byId) return byId;
+  }
+
+  if (label) {
+    const byLabel = scoped.find((block) => {
+      const blockLabel = String(block?.label || "").trim().toLowerCase();
+      const blockId = String(block?.id || "").trim().toLowerCase();
+      return blockLabel === label || blockId === label;
+    });
+    if (byLabel) return byLabel;
+  }
+
+  if (type) {
+    return scoped.find((block) => String(block?.type || "") === type)
+      || list.find((block) => String(block?.type || "") === type)
+      || null;
+  }
+
+  return null;
+}
+
+/**
+ * Inicializa values de parameters a partir de parameterDefinitions.
+ */
+export function buildParametersFromDefinitions(parameterDefinitions = {}, overrides = {}) {
+  const defaults = {};
+  Object.entries(parameterDefinitions || {}).forEach(([key, param]) => {
+    if (param && typeof param === "object" && param.default !== undefined) {
+      defaults[key] = param.default;
+    } else if (param !== undefined && param !== null && typeof param !== "object") {
+      defaults[key] = param;
+    }
+  });
+  return { ...defaults, ...(overrides || {}) };
+}
+
+/**
+ * Schema compacto de parámetros para contexto de IA.
+ */
+export function slimParameterSchema(parameterDefinitions = {}) {
+  const schema = {};
+  Object.entries(parameterDefinitions || {}).forEach(([key, param]) => {
+    if (param && typeof param === "object") {
+      schema[key] = {
+        type: param.type || "string",
+        required: Boolean(param.required),
+        default: param.default,
+      };
+    } else {
+      schema[key] = { type: typeof param, default: param };
+    }
+  });
+  return schema;
+}
+
+/**
  * Agrupa bloques por framework y luego por categoría.
  * Incluye sección "Favoritos" (common) por framework con isDefaultFavorite.
  * @param {Object[]} blocks - bloques desde fetchTaskBlocks

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sendAiChatMessage } from "../services/aiChatService";
+import { summarizeAiActions } from "../services/aiActionSummary";
 
 export default function AIChatPanel({
   isOpen,
@@ -18,6 +19,49 @@ export default function AIChatPanel({
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [applyingMessageId, setApplyingMessageId] = useState(null);
+  const [expandedSummaries, setExpandedSummaries] = useState({});
+  const listRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen || !listRef.current) return;
+    listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [messages, isOpen, loading]);
+
+  const applyActions = async (actions, messageId) => {
+    setApplyingMessageId(messageId);
+    try {
+      const result = await onApplyActions?.(actions);
+      if (result?.appliedActions > 0) {
+        const rejected = result.rejectedActions > 0
+          ? ` (${result.rejectedActions} rechazada(s))`
+          : "";
+        onNotify?.(`✅ IA aplicó ${result.appliedActions} acción(es)${rejected}`, "success");
+        setMessages((prev) => prev.map((message) => (
+          message.id === messageId ? { ...message, status: "applied" } : message
+        )));
+      } else {
+        onNotify?.("⚠️ La IA no propuso acciones válidas para el flow actual", "warning");
+      }
+      return result;
+    } finally {
+      setApplyingMessageId(null);
+    }
+  };
+
+  const discardActions = (messageId) => {
+    setMessages((prev) => prev.map((message) => (
+      message.id === messageId ? { ...message, status: "discarded" } : message
+    )));
+    onNotify?.("Cambios descartados", "warning");
+  };
+
+  const toggleSummary = (messageId) => {
+    setExpandedSummaries((prev) => ({
+      ...prev,
+      [messageId]: !prev[messageId],
+    }));
+  };
 
   const handleSend = async () => {
     const text = input.trim();
@@ -33,27 +77,28 @@ export default function AIChatPanel({
     try {
       const context = getContext?.() || {};
       const response = await sendAiChatMessage({ message: text, context });
+      const actions = Array.isArray(response.actions) ? response.actions : [];
       const assistantText =
         response.assistantMessage ||
-        (response.actions?.length
-          ? `Preparé ${response.actions.length} acción(es) para el flow.`
+        (actions.length
+          ? `Preparé ${actions.length} acción(es) para el flow.`
           : "No encontré cambios para aplicar.");
 
+      const assistantId = `assistant_${Date.now()}`;
       setMessages((prev) => [
         ...prev,
         {
-          id: `assistant_${Date.now()}`,
+          id: assistantId,
           role: "assistant",
           text: assistantText,
-          actions: response.actions || [],
+          actions,
+          status: actions.length > 0 ? "pending" : "none",
         },
       ]);
 
-      if (Array.isArray(response.actions) && response.actions.length > 0) {
-        const result = onApplyActions?.(response.actions);
-        if (result?.applied) {
-          onNotify?.(`✅ IA aplicó ${response.actions.length} acción(es)`, "success");
-        }
+      if (actions.length > 0) {
+        setExpandedSummaries((prev) => ({ ...prev, [assistantId]: true }));
+        onNotify?.("Revisa el resumen y confirma antes de aplicar", "warning");
       }
     } catch (error) {
       setMessages((prev) => [
@@ -63,11 +108,19 @@ export default function AIChatPanel({
           role: "assistant",
           text: error?.response?.data?.error || error?.message || "Error enviando mensaje al chat IA.",
           actions: [],
+          status: "none",
         },
       ]);
       onNotify?.("❌ Error en chat IA", "error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
     }
   };
 
@@ -98,39 +151,125 @@ export default function AIChatPanel({
 
       {isOpen && (
         <>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`rounded-lg px-3 py-2 text-sm ${
-                  msg.role === "user"
-                    ? "bg-blue-50 border border-blue-200 text-blue-900"
-                    : "bg-slate-50 border border-slate-200 text-slate-700"
-                }`}
-              >
-                <div className="text-[11px] uppercase tracking-wide mb-1 opacity-70">
-                  {msg.role === "user" ? "Tú" : "IA"}
-                </div>
-                <div>{msg.text}</div>
-                {msg.actions?.length > 0 && (
-                  <div className="mt-2 text-[11px] text-slate-500">
-                    Acciones: {msg.actions.map((a) => a.type).join(", ")}
+          <div ref={listRef} className="flex-1 overflow-y-auto p-3 space-y-2">
+            {messages.map((msg) => {
+              const summary = msg.actions?.length ? summarizeAiActions(msg.actions) : null;
+              const isPending = msg.status === "pending";
+              const isExpanded = expandedSummaries[msg.id] ?? isPending;
+              const isApplying = applyingMessageId === msg.id;
+
+              return (
+                <div
+                  key={msg.id}
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    msg.role === "user"
+                      ? "bg-blue-50 border border-blue-200 text-blue-900"
+                      : "bg-slate-50 border border-slate-200 text-slate-700"
+                  }`}
+                >
+                  <div className="text-[11px] uppercase tracking-wide mb-1 opacity-70">
+                    {msg.role === "user" ? "Tú" : "IA"}
                   </div>
-                )}
+                  <div className="whitespace-pre-wrap">{msg.text}</div>
+
+                  {summary && isPending && (
+                    <div className="mt-3 rounded-md border border-slate-200 bg-white overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => toggleSummary(msg.id)}
+                        className="w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left hover:bg-slate-50"
+                      >
+                        <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[16px] text-blue-600">
+                            checklist
+                          </span>
+                          {summary.title}
+                        </span>
+                        <span className="material-symbols-outlined text-[18px] text-slate-400">
+                          {isExpanded ? "expand_less" : "expand_more"}
+                        </span>
+                      </button>
+
+                      {isExpanded && (
+                        <ul className="px-2.5 pb-2 space-y-1.5 border-t border-slate-100">
+                          {summary.items.map((item, index) => (
+                            <li
+                              key={`${msg.id}_${item.type}_${index}`}
+                              className="text-[11px] text-slate-600 flex gap-1.5"
+                            >
+                              <span className="text-slate-400 shrink-0">{index + 1}.</span>
+                              <span>
+                                <span className="font-medium text-slate-700">{item.label}:</span>{" "}
+                                {item.detail}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      <div className="flex gap-2 px-2.5 pb-2.5 pt-1 border-t border-slate-100">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void applyActions(msg.actions, msg.id);
+                          }}
+                          disabled={isApplying}
+                          className={`flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-60 ${
+                            summary.destructive
+                              ? "bg-amber-600 hover:bg-amber-700"
+                              : "bg-blue-600 hover:bg-blue-700"
+                          }`}
+                        >
+                          {isApplying ? "Aplicando…" : "Aplicar al flow"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => discardActions(msg.id)}
+                          disabled={isApplying}
+                          className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          Descartar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {summary && msg.status === "applied" && (
+                    <div className="mt-2 text-[11px] text-emerald-700 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                      {summary.count} cambio(s) aplicado(s) al flow.
+                    </div>
+                  )}
+
+                  {summary && msg.status === "discarded" && (
+                    <div className="mt-2 text-[11px] text-slate-500 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">block</span>
+                      Cambios descartados ({summary.count} acción(es)).
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {loading && (
+              <div className="rounded-lg px-3 py-2 text-sm bg-slate-50 border border-slate-200 text-slate-500">
+                Pensando…
               </div>
-            ))}
+            )}
           </div>
 
           <div className="border-t border-slate-200 p-3">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
               placeholder="Ej: Agrega un PythonOperator llamado limpiar_datos y conéctalo al nodo raíz."
               rows={3}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
             />
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-slate-500">Contexto del flow incluido automáticamente</span>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="text-[11px] text-slate-500">
+                Enter envía · Shift+Enter nueva línea
+              </span>
               <button
                 type="button"
                 onClick={handleSend}
@@ -146,4 +285,3 @@ export default function AIChatPanel({
     </div>
   );
 }
-
