@@ -586,7 +586,13 @@ Estado actual:
       </AnimatePresence>
 
       {/* TopBar */}
-      <TopBar onAction={handleTopBarAction} onTemplateSelect={handleTemplateSelect} isAdmin={isAdmin} />
+      <TopBar
+        onAction={handleTopBarAction}
+        onTemplateSelect={handleTemplateSelect}
+        isAdmin={isAdmin}
+        isAiChatOpen={isAiChatOpen}
+        onToggleAiChat={() => setIsAiChatOpen((prev) => !prev)}
+      />
 
       <AdminTasksPanel
         isOpen={isAdminPanelOpen}
@@ -677,6 +683,18 @@ Estado actual:
 
         {!isMobileLayout && (
           <AIChatPanel
+            variant="sidebar"
+            isOpen={isAiChatOpen}
+            onToggle={() => setIsAiChatOpen((prev) => !prev)}
+            getContext={getAiContext}
+            onApplyActions={handleApplyAiActions}
+            onNotify={showNotif}
+          />
+        )}
+
+        {isMobileLayout && (
+          <AIChatPanel
+            variant="drawer"
             isOpen={isAiChatOpen}
             onToggle={() => setIsAiChatOpen((prev) => !prev)}
             getContext={getAiContext}

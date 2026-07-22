@@ -3,6 +3,7 @@ import { sendAiChatMessage } from "../services/aiChatService";
 import { summarizeAiActions } from "../services/aiActionSummary";
 
 export default function AIChatPanel({
+  variant = "sidebar",
   isOpen,
   onToggle,
   getContext,
@@ -22,6 +23,7 @@ export default function AIChatPanel({
   const [applyingMessageId, setApplyingMessageId] = useState(null);
   const [expandedSummaries, setExpandedSummaries] = useState({});
   const listRef = useRef(null);
+  const isDrawer = variant === "drawer";
 
   useEffect(() => {
     if (!isOpen || !listRef.current) return;
@@ -124,24 +126,24 @@ export default function AIChatPanel({
     }
   };
 
-  return (
-    <div
-      className={`h-full border-l border-slate-200 bg-white flex flex-col transition-all duration-200 ${
-        isOpen ? "w-[360px] min-w-[320px]" : "w-[56px] min-w-[56px]"
-      }`}
-    >
-      <div className="h-12 border-b border-slate-200 px-2 flex items-center justify-between">
+  const panelBody = (
+    <>
+      <div
+        className={`border-b border-slate-200 px-2 flex items-center justify-between shrink-0 ${
+          isDrawer ? "h-12" : "h-12"
+        }`}
+      >
         <button
           type="button"
           onClick={onToggle}
           className="h-9 w-9 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-          title={isOpen ? "Contraer chat IA" : "Expandir chat IA"}
+          title={isOpen ? "Cerrar chat IA" : "Abrir chat IA"}
         >
           <span className="material-symbols-outlined text-[18px]">
-            {isOpen ? "chevron_right" : "chevron_left"}
+            {isOpen ? "close" : "smart_toy"}
           </span>
         </button>
-        {isOpen && (
+        {(isOpen || isDrawer) && (
           <div className="text-sm font-semibold text-slate-700 pr-2 flex items-center gap-1.5">
             <span className="material-symbols-outlined text-[18px] text-blue-600">smart_toy</span>
             Asistente IA
@@ -151,7 +153,7 @@ export default function AIChatPanel({
 
       {isOpen && (
         <>
-          <div ref={listRef} className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div ref={listRef} className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
             {messages.map((msg) => {
               const summary = msg.actions?.length ? summarizeAiActions(msg.actions) : null;
               const isPending = msg.status === "pending";
@@ -257,7 +259,7 @@ export default function AIChatPanel({
             )}
           </div>
 
-          <div className="border-t border-slate-200 p-3">
+          <div className="border-t border-slate-200 p-3 shrink-0">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -282,6 +284,45 @@ export default function AIChatPanel({
           </div>
         </>
       )}
+    </>
+  );
+
+  if (isDrawer) {
+    if (!isOpen) {
+      return (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="fixed bottom-4 right-4 z-[180] h-12 w-12 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 flex items-center justify-center"
+          title="Abrir asistente IA"
+        >
+          <span className="material-symbols-outlined text-[24px]">smart_toy</span>
+        </button>
+      );
+    }
+
+    return (
+      <>
+        <button
+          type="button"
+          aria-label="Cerrar chat IA"
+          onClick={onToggle}
+          className="fixed inset-0 z-[180] bg-slate-900/40"
+        />
+        <div className="fixed right-0 top-12 bottom-0 z-[190] w-[min(360px,92vw)] min-w-[280px] border-l border-slate-200 bg-white flex flex-col shadow-2xl">
+          {panelBody}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div
+      className={`h-full border-l border-slate-200 bg-white flex flex-col transition-all duration-200 flex-shrink-0 ${
+        isOpen ? "w-[360px] min-w-[320px]" : "w-[56px] min-w-[56px]"
+      }`}
+    >
+      {panelBody}
     </div>
   );
 }

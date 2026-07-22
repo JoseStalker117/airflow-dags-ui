@@ -39,7 +39,13 @@ const writeTemplatesCache = (data) => {
   }
 };
 
-export default function TopBar({ onAction, onTemplateSelect, isAdmin = false }) {
+export default function TopBar({
+  onAction,
+  onTemplateSelect,
+  isAdmin = false,
+  isAiChatOpen = false,
+  onToggleAiChat,
+}) {
   const [activeGroup, setActiveGroup] = useState(null);
   const [templateCascadeOpen, setTemplateCascadeOpen] = useState(false);
   const [selectedTemplateFramework, setSelectedTemplateFramework] = useState(null);
@@ -403,6 +409,21 @@ export default function TopBar({ onAction, onTemplateSelect, isAdmin = false }) 
         )}
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0 pl-2 border-l border-slate-200">
+          {typeof onToggleAiChat === "function" && (
+            <button
+              type="button"
+              onClick={onToggleAiChat}
+              className={`h-9 w-9 rounded-md border flex items-center justify-center transition-colors ${
+                isAiChatOpen
+                  ? "border-blue-300 bg-blue-50 text-blue-700"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+              }`}
+              title={isAiChatOpen ? "Ocultar asistente IA" : "Abrir asistente IA"}
+            >
+              <span className="material-symbols-outlined text-[20px]">smart_toy</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600">
               <span className="material-symbols-outlined text-[20px]">
